@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AS4 to AS6 Conversion Tool</title>
+    <link rel="stylesheet" href="as4-converter-styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <header class="app-header">
+            <h1>🔄 AS4 to AS6 Conversion Tool</h1>
+            <p class="subtitle">Analyze and migrate B&R Automation Studio projects</p>
+        </header>
+
+        <nav class="tab-navigation">
+            <button class="tab-btn active" data-tab="project">📁 Project Selection</button>
+            <button class="tab-btn" data-tab="analysis">🔍 Analysis Results</button>
+            <button class="tab-btn" data-tab="preview">👁️ Preview Changes</button>
+            <button class="tab-btn" data-tab="report">📊 Report</button>
+        </nav>
+
+        <!-- Tab 1: Project Selection -->
+        <div id="tab-project" class="tab-content active">
+            <div class="tab-panel">
+                <h2>Select AS4 Project Files</h2>
+                <p class="help-text">Upload your AS4 project files to analyze for deprecated libraries, functions, and hardware.</p>
+                
+                <div class="upload-section">
+                    <div class="upload-zone" id="dropZone">
+                        <div class="upload-icon">📂</div>
+                        <p>Drag & drop project files here</p>
+                        <p class="upload-hint">or click to browse</p>
+                        <input type="file" id="fileInput" multiple webkitdirectory accept=".st,.fun,.typ,.var,.hw,.hwl,.xml,.pkg,.apj" hidden>
+                    </div>
+                    
+                    <div class="upload-options">
+                        <label class="file-input-label">
+                            <input type="file" id="folderInput" webkitdirectory multiple>
+                            📁 Select Project Folder
+                        </label>
+                        <label class="file-input-label">
+                            <input type="file" id="zipInput" accept=".zip">
+                            📦 Upload ZIP Archive
+                        </label>
+                    </div>
+                </div>
+
+                <div id="projectInfo" class="project-info hidden">
+                    <h3>📋 Project Summary</h3>
+                    <div class="info-grid">
+                        <div class="info-item">
+                            <span class="info-label">Total Files:</span>
+                            <span id="totalFiles" class="info-value">0</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">ST Files:</span>
+                            <span id="stFiles" class="info-value">0</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Package Files:</span>
+                            <span id="pkgFiles" class="info-value">0</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">TMX Files:</span>
+                            <span id="tmxFiles" class="info-value">0</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Motion Files:</span>
+                            <span id="motionFiles" class="info-value">0</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Hardware Config:</span>
+                            <span id="hwFiles" class="info-value">0</span>
+                        </div>
+                    </div>
+                    
+                    <div id="fileTree" class="file-tree"></div>
+                </div>
+
+                <div class="action-buttons">
+                    <button id="btnScan" class="btn btn-primary" disabled>
+                        🔍 Scan for Deprecations
+                    </button>
+                    <button id="btnClear" class="btn btn-secondary" disabled>
+                        🗑️ Clear Project
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 2: Analysis Results -->
+        <div id="tab-analysis" class="tab-content">
+            <div class="tab-panel">
+                <h2>Analysis Results</h2>
+                
+                <div id="analysisEmpty" class="empty-state">
+                    <div class="empty-icon">🔍</div>
+                    <p>No analysis results yet</p>
+                    <p class="help-text">Upload a project and click "Scan for Deprecations" to begin.</p>
+                </div>
+
+                <div id="analysisResults" class="hidden">
+                    <div class="summary-cards">
+                        <div class="summary-card severity-error">
+                            <div class="card-value" id="errorCount">0</div>
+                            <div class="card-label">Errors</div>
+                            <div class="card-desc">Blocking issues</div>
+                        </div>
+                        <div class="summary-card severity-warning">
+                            <div class="card-value" id="warningCount">0</div>
+                            <div class="card-label">Warnings</div>
+                            <div class="card-desc">Recommended changes</div>
+                        </div>
+                        <div class="summary-card severity-info">
+                            <div class="card-value" id="infoCount">0</div>
+                            <div class="card-label">Info</div>
+                            <div class="card-desc">Optional updates</div>
+                        </div>
+                        <div class="summary-card severity-success">
+                            <div class="card-value" id="compatibleCount">0</div>
+                            <div class="card-label">Compatible</div>
+                            <div class="card-desc">No changes needed</div>
+                        </div>
+                    </div>
+
+                    <div class="filter-bar">
+                        <input type="text" id="searchFilter" placeholder="🔍 Search findings..." class="search-input">
+                        <select id="severityFilter" class="filter-select">
+                            <option value="all">All Severities</option>
+                            <option value="error">Errors Only</option>
+                            <option value="warning">Warnings Only</option>
+                            <option value="info">Info Only</option>
+                        </select>
+                        <select id="typeFilter" class="filter-select">
+                            <option value="all">All Types</option>
+                            <option value="library">Libraries</option>
+                            <option value="function">Functions</option>
+                            <option value="hardware">Hardware</option>
+                            <option value="project">Project Format</option>
+                            <option value="compiler">Compiler Settings</option>
+                            <option value="runtime">Automation Runtime</option>
+                            <option value="technology_package">Technology Packages</option>
+                            <option value="package">Package Files</option>
+                            <option value="task_config">Task Configuration</option>
+                            <option value="motion">Motion & Axis</option>
+                            <option value="localization">Localization (TMX)</option>
+                        </select>
+                    </div>
+
+                    <div class="findings-actions">
+                        <button id="btnSelectAll" class="btn btn-small">☑️ Select All</button>
+                        <button id="btnDeselectAll" class="btn btn-small">☐ Deselect All</button>
+                        <span id="selectedCount" class="selected-count">0 items selected</span>
+                    </div>
+
+                    <div id="findingsList" class="findings-list"></div>
+
+                    <div class="action-buttons">
+                        <button id="btnPreview" class="btn btn-primary" disabled>
+                            👁️ Preview Selected Changes
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 3: Preview Changes -->
+        <div id="tab-preview" class="tab-content">
+            <div class="tab-panel">
+                <h2>Conversion Preview</h2>
+                
+                <div id="previewEmpty" class="empty-state">
+                    <div class="empty-icon">👁️</div>
+                    <p>No changes selected for preview</p>
+                    <p class="help-text">Select items from the Analysis tab and click "Preview Selected Changes".</p>
+                </div>
+
+                <div id="previewContent" class="hidden">
+                    <div class="preview-summary">
+                        <span id="previewItemCount">0</span> items selected for conversion
+                        <span id="previewFileCount">0</span> files will be modified
+                    </div>
+
+                    <div class="preview-controls">
+                        <button id="btnExpandAll" class="btn btn-small">➕ Expand All</button>
+                        <button id="btnCollapseAll" class="btn btn-small">➖ Collapse All</button>
+                    </div>
+
+                    <div id="previewList" class="preview-list"></div>
+
+                    <div class="action-buttons">
+                        <button id="btnApplyAll" class="btn btn-primary">
+                            ✅ Apply All Conversions
+                        </button>
+                        <button id="btnUndoAll" class="btn btn-secondary" disabled>
+                            ↩️ Undo All Changes
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 4: Report -->
+        <div id="tab-report" class="tab-content">
+            <div class="tab-panel">
+                <h2>Conversion Report</h2>
+                
+                <div id="reportEmpty" class="empty-state">
+                    <div class="empty-icon">📊</div>
+                    <p>No report generated yet</p>
+                    <p class="help-text">Complete the conversion process to generate a detailed report.</p>
+                </div>
+
+                <div id="reportContent" class="hidden">
+                    <div class="report-header">
+                        <h3>AS4 to AS6 Migration Report</h3>
+                        <div class="report-meta">
+                            <span>Generated: <span id="reportDate"></span></span>
+                            <span>Tool Version: 1.0</span>
+                        </div>
+                    </div>
+
+                    <div class="report-section">
+                        <h4>📈 Executive Summary</h4>
+                        <div id="reportSummary" class="report-summary"></div>
+                    </div>
+
+                    <div class="report-section">
+                        <h4>📋 Detailed Findings</h4>
+                        <div id="reportFindings" class="report-findings"></div>
+                    </div>
+
+                    <div class="report-section">
+                        <h4>💻 Code Changes</h4>
+                        <div id="reportChanges" class="report-changes"></div>
+                    </div>
+
+                    <div class="report-section">
+                        <h4>📝 Recommendations</h4>
+                        <div id="reportRecommendations" class="report-recommendations"></div>
+                    </div>
+
+                    <div class="export-options">
+                        <h4>Export Report</h4>
+                        <div class="export-buttons">
+                            <button id="btnExportHTML" class="btn btn-secondary">📄 HTML</button>
+                            <button id="btnExportJSON" class="btn btn-secondary">📋 JSON</button>
+                            <button id="btnExportCSV" class="btn btn-secondary">📊 CSV</button>
+                        </div>
+                    </div>
+
+                    <div class="download-section">
+                        <h4>Download Converted Project</h4>
+                        <button id="btnDownloadProject" class="btn btn-primary btn-large">
+                            📦 Download Converted Project (ZIP)
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <footer class="app-footer">
+            <p>AS4 to AS6 Conversion Tool v2.0 | B&R Automation Studio Migration Assistant</p>
+            <p class="footer-subtitle">Updated with verified AS6 format support (AS6.5.0.305)</p>
+        </footer>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="deprecation-database.js"></script>
+    <script src="as4-converter.js"></script>
+</body>
+</html>
