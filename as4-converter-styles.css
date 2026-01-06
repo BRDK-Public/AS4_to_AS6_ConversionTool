@@ -539,6 +539,45 @@ body {
     color: white;
 }
 
+.blocking-badge {
+    background: linear-gradient(135deg, #8e0000 0%, #c0392b 100%);
+    color: white;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    margin-right: 8px;
+    animation: blink-warning 1.5s ease-in-out infinite;
+}
+
+@keyframes blink-warning {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+.blocking-warning {
+    background: rgba(192, 57, 43, 0.15);
+    border: 1px solid #c0392b;
+    color: #8e0000;
+    padding: 10px 15px;
+    border-radius: 6px;
+    margin-bottom: 12px;
+    font-weight: 600;
+}
+
+.finding-card.blocking {
+    border-left: 4px solid #8e0000;
+    background: linear-gradient(to right, rgba(142, 0, 0, 0.08), transparent);
+}
+
+.finding-migration {
+    margin-top: 10px;
+    padding: 8px 12px;
+    background: var(--info-light);
+    border-radius: 4px;
+    color: var(--info-color);
+}
+
 .finding-body {
     padding: 15px;
 }

@@ -30,11 +30,19 @@ const DeprecationDatabase = {
         },
         
         // Automation Runtime version
-        // AS4 uses versions like B4.83, C4.93, D4.73, etc. (letter prefix + 4.xx)
+        // AS4 uses versions like B4.83, C4.93, D4.73, E4.xx, F4.xx, etc. (letter prefix + 4.xx)
         // AS6 uses versions like 6.2.1
         automationRuntime: {
-            as4: { versionPattern: /^[A-Z]?4\.\d+$/, description: 'AR 4.xx (AS4 series)' },
+            as4: { versionPattern: /^[A-Z]4\.\d+(\.\d+)?$/, description: 'AR 4.xx (AS4 series)' },
             as6: { version: '6.2.1', description: 'AR 6.2.1 (AS6 default)' }
+        },
+        
+        // AR version requirements for AS6 migration
+        arVersionRequirements: {
+            minimumVersion: 4.25,
+            minimumVersionDisplay: 'B4.25',
+            description: 'Projects must be on AR 4.25 or higher for reliable AS6 migration',
+            upgradeNote: 'Upgrade to latest AS4 AR version (B4.93 or higher recommended) before migrating'
         },
         
         // Required new elements in AS6
@@ -197,8 +205,235 @@ const DeprecationDatabase = {
             'ArUser': { source: 'Library_2', as6LibVersion: null },
             'ArSsl': { source: 'Library_2', as6LibVersion: null },
             'powerlnk': { source: 'Library_2', as6LibVersion: null }
+        },
+        
+        // Visual Components support in AS6
+        // VC3 is NOT supported in AS6 - project cannot be converted
+        // VC4 is supported but may need stack size adjustments
+        visualComponents: {
+            vc3: {
+                supported: false,
+                severity: 'error',
+                blocking: true,
+                markers: ['Language="Vc3"', 'Language="VC3"', '<Vc3', 'ObjectType="VC3'],
+                description: 'Visual Components 3 (VC3) is NOT supported in AS6',
+                notes: 'VC3 must be migrated to VC4 or mappView before AS6 conversion. This is a blocking issue.',
+                migration: 'Use B&R VC3 to VC4 migration tool or redesign with mappView'
+            },
+            vc4: {
+                supported: true,
+                severity: 'warning',
+                blocking: false,
+                markers: ['Language="Vc4"', 'Language="VC4"', '<Vc4', 'ObjectType="VC4'],
+                description: 'Visual Components 4 (VC4) requires stack size verification',
+                notes: 'VC4 is supported in AS6 but task stack sizes may need adjustment.',
+                stackSizeRecommendation: 16384,
+                migration: 'Verify task stack sizes are at least 16KB for VC4 tasks'
+            }
+        },
+        
+        // Security and access control requirements for AS6
+        securityChecks: {
+            userRoleSystem: {
+                required: true,
+                path: 'AccessAndSecurity/UserRoleSystem',
+                description: 'User Role System folder required in AS6',
+                notes: 'AS6 requires explicit security configuration'
+            },
+            certificateStore: {
+                required: true,
+                path: 'AccessAndSecurity/CertificateStore',
+                description: 'Certificate Store folder required in AS6',
+                notes: 'TLS/SSL certificates must be managed in AS6'
+            },
+            anslAuthentication: {
+                hwAttribute: 'AnslAuthentication',
+                description: 'ANSL authentication is mandatory in AS6',
+                notes: 'ANSL (Automation Network Security Layer) must be configured'
+            }
         }
     },
+    
+    // ==========================================
+    // OBSOLETE FUNCTION BLOCKS
+    // These FBs are deprecated and should be replaced with modern equivalents
+    // ==========================================
+    obsoleteFunctionBlocks: [
+        // Legacy MC_BR motion function blocks -> Standard PLCopen
+        {
+            name: 'MC_BR_MoveAbsolute',
+            pattern: /\bMC_BR_MoveAbsolute\b/g,
+            replacement: 'MC_MoveAbsolute',
+            severity: 'warning',
+            category: 'motion',
+            description: 'B&R-specific motion FB replaced by PLCopen standard',
+            notes: 'Use standard PLCopen MC_MoveAbsolute. Parameters are compatible.',
+            autoReplace: true
+        },
+        {
+            name: 'MC_BR_MoveAdditive',
+            pattern: /\bMC_BR_MoveAdditive\b/g,
+            replacement: 'MC_MoveAdditive',
+            severity: 'warning',
+            category: 'motion',
+            description: 'B&R-specific motion FB replaced by PLCopen standard',
+            notes: 'Use standard PLCopen MC_MoveAdditive.',
+            autoReplace: true
+        },
+        {
+            name: 'MC_BR_MoveVelocity',
+            pattern: /\bMC_BR_MoveVelocity\b/g,
+            replacement: 'MC_MoveVelocity',
+            severity: 'warning',
+            category: 'motion',
+            description: 'B&R-specific motion FB replaced by PLCopen standard',
+            notes: 'Use standard PLCopen MC_MoveVelocity.',
+            autoReplace: true
+        },
+        {
+            name: 'MC_BR_Jog',
+            pattern: /\bMC_BR_Jog\b/g,
+            replacement: 'MC_Jog',
+            severity: 'warning',
+            category: 'motion',
+            description: 'B&R-specific jog FB replaced by standard',
+            notes: 'Use standard MC_Jog function block.',
+            autoReplace: true
+        },
+        {
+            name: 'MC_BR_Halt',
+            pattern: /\bMC_BR_Halt\b/g,
+            replacement: 'MC_Halt',
+            severity: 'warning',
+            category: 'motion',
+            description: 'B&R-specific halt FB replaced by PLCopen standard',
+            notes: 'Use standard PLCopen MC_Halt.',
+            autoReplace: true
+        },
+        {
+            name: 'MC_BR_Stop',
+            pattern: /\bMC_BR_Stop\b/g,
+            replacement: 'MC_Stop',
+            severity: 'warning',
+            category: 'motion',
+            description: 'B&R-specific stop FB replaced by PLCopen standard',
+            notes: 'Use standard PLCopen MC_Stop.',
+            autoReplace: true
+        },
+        {
+            name: 'MC_BR_Home',
+            pattern: /\bMC_BR_Home\b/g,
+            replacement: 'MC_Home',
+            severity: 'warning',
+            category: 'motion',
+            description: 'B&R-specific home FB replaced by PLCopen standard',
+            notes: 'Use standard PLCopen MC_Home.',
+            autoReplace: true
+        },
+        {
+            name: 'MC_BR_ReadActualPosition',
+            pattern: /\bMC_BR_ReadActualPosition\b/g,
+            replacement: 'MC_ReadActualPosition',
+            severity: 'warning',
+            category: 'motion',
+            description: 'B&R-specific read position FB replaced by PLCopen standard',
+            notes: 'Use standard PLCopen MC_ReadActualPosition.',
+            autoReplace: true
+        },
+        // MTBasics legacy temperature/control FBs
+        {
+            name: 'MTBasicsPID',
+            pattern: /\bMTBasicsPID\b/g,
+            replacement: 'MpTempController',
+            severity: 'warning',
+            category: 'temperature',
+            description: 'Legacy MTBasics PID controller replaced by mapp',
+            notes: 'Consider migrating to MpTempController for advanced features.',
+            autoReplace: false
+        },
+        {
+            name: 'MTBasicsPWM',
+            pattern: /\bMTBasicsPWM\b/g,
+            replacement: 'MpTempController',
+            severity: 'info',
+            category: 'temperature',
+            description: 'Legacy MTBasics PWM controller',
+            notes: 'MpTempController includes PWM output capabilities.',
+            autoReplace: false
+        },
+        // Legacy OPC UA function blocks
+        {
+            name: 'UaConnect',
+            pattern: /\bUaConnect\b/g,
+            replacement: 'UA_Connect',
+            severity: 'warning',
+            category: 'opcua',
+            description: 'Legacy OPC UA connect FB',
+            notes: 'Use UA_Connect from OpcUa library.',
+            autoReplace: true
+        },
+        {
+            name: 'UaDisconnect',
+            pattern: /\bUaDisconnect\b/g,
+            replacement: 'UA_Disconnect',
+            severity: 'warning',
+            category: 'opcua',
+            description: 'Legacy OPC UA disconnect FB',
+            notes: 'Use UA_Disconnect from OpcUa library.',
+            autoReplace: true
+        },
+        {
+            name: 'UaRead',
+            pattern: /\bUaRead\b/g,
+            replacement: 'UA_Read',
+            severity: 'warning',
+            category: 'opcua',
+            description: 'Legacy OPC UA read FB',
+            notes: 'Use UA_Read from OpcUa library.',
+            autoReplace: true
+        },
+        {
+            name: 'UaWrite',
+            pattern: /\bUaWrite\b/g,
+            replacement: 'UA_Write',
+            severity: 'warning',
+            category: 'opcua',
+            description: 'Legacy OPC UA write FB',
+            notes: 'Use UA_Write from OpcUa library.',
+            autoReplace: true
+        },
+        // Legacy string functions
+        {
+            name: 'brsstrcat',
+            pattern: /\bbrsstrcat\b/g,
+            replacement: 'brstrcat',
+            severity: 'info',
+            category: 'string',
+            description: 'Legacy string concatenation function',
+            notes: 'Use AsBrStr library brstrcat function.',
+            autoReplace: true
+        },
+        {
+            name: 'brsstrcpy',
+            pattern: /\bbrsstrcpy\b/g,
+            replacement: 'brstrcpy',
+            severity: 'info',
+            category: 'string',
+            description: 'Legacy string copy function',
+            notes: 'Use AsBrStr library brstrcpy function.',
+            autoReplace: true
+        },
+        {
+            name: 'brssprintf',
+            pattern: /\bbrssprintf\b/g,
+            replacement: 'brsprintf',
+            severity: 'info',
+            category: 'string',
+            description: 'Legacy string format function',
+            notes: 'Use AsBrStr library brsprintf function.',
+            autoReplace: true
+        }
+    ],
 
     // ==========================================
     // DEPRECATED LIBRARIES
@@ -1157,6 +1392,151 @@ const DeprecationDatabase = {
         });
         
         return as6Packages;
+    },
+
+    /**
+     * Parse AR version string to extract numeric version
+     * Supports formats: B4.83, C4.93, D4.73, E4.xx, F4.xx, 4.83, etc.
+     * @param {string} versionStr - AR version string (e.g., "B4.83", "C4.93")
+     * @returns {object} - { prefix: 'B', major: 4, minor: 83, numeric: 4.83, full: 'B4.83' }
+     */
+    parseARVersion(versionStr) {
+        if (!versionStr) return null;
+        
+        // Match patterns like B4.83, C4.93, D4.73, or just 4.83
+        const match = versionStr.match(/^([A-Z])?(\d+)\.(\d+)(?:\.(\d+))?$/);
+        if (!match) return null;
+        
+        const prefix = match[1] || '';
+        const major = parseInt(match[2], 10);
+        const minor = parseInt(match[3], 10);
+        const patch = match[4] ? parseInt(match[4], 10) : 0;
+        
+        // Calculate numeric version for comparison (e.g., B4.83 -> 4.83)
+        const numeric = major + (minor / 100);
+        
+        return {
+            prefix: prefix,
+            major: major,
+            minor: minor,
+            patch: patch,
+            numeric: numeric,
+            full: versionStr
+        };
+    },
+
+    /**
+     * Validate if AR version meets minimum requirements for AS6 migration
+     * @param {string} versionStr - AR version string (e.g., "B4.83")
+     * @returns {object} - { valid: true/false, version: parsed, minimum: 4.25, message: string }
+     */
+    validateARVersionForAS6(versionStr) {
+        const parsed = this.parseARVersion(versionStr);
+        const minVersion = this.as6Format.arVersionRequirements.minimumVersion;
+        const minDisplay = this.as6Format.arVersionRequirements.minimumVersionDisplay;
+        
+        if (!parsed) {
+            return {
+                valid: false,
+                version: null,
+                minimum: minVersion,
+                message: `Unable to parse AR version: ${versionStr}`
+            };
+        }
+        
+        const isValid = parsed.numeric >= minVersion;
+        
+        return {
+            valid: isValid,
+            version: parsed,
+            minimum: minVersion,
+            minimumDisplay: minDisplay,
+            message: isValid 
+                ? `AR version ${parsed.full} meets minimum requirement (${minDisplay})`
+                : `AR version ${parsed.full} is below minimum ${minDisplay} required for AS6 migration. ${this.as6Format.arVersionRequirements.upgradeNote}`
+        };
+    },
+
+    /**
+     * Check content for VC3/VC4 usage
+     * @param {string} content - File content to analyze
+     * @returns {object} - { hasVC3: bool, hasVC4: bool, markers: [], severity: string }
+     */
+    detectVisualComponents(content) {
+        const result = {
+            hasVC3: false,
+            hasVC4: false,
+            vc3Markers: [],
+            vc4Markers: [],
+            blocking: false,
+            severity: null
+        };
+        
+        const vcConfig = this.as6Format.visualComponents;
+        
+        // Check for VC3 markers
+        vcConfig.vc3.markers.forEach(marker => {
+            if (content.includes(marker)) {
+                result.hasVC3 = true;
+                result.vc3Markers.push(marker);
+            }
+        });
+        
+        // Check for VC4 markers
+        vcConfig.vc4.markers.forEach(marker => {
+            if (content.includes(marker)) {
+                result.hasVC4 = true;
+                result.vc4Markers.push(marker);
+            }
+        });
+        
+        // Determine severity
+        if (result.hasVC3) {
+            result.blocking = true;
+            result.severity = 'error';
+        } else if (result.hasVC4) {
+            result.severity = 'warning';
+        }
+        
+        return result;
+    },
+
+    /**
+     * Find obsolete function blocks in content
+     * @param {string} content - ST code content
+     * @returns {Array} - Array of { name, match, index, line, replacement, autoReplace }
+     */
+    findObsoleteFunctionBlocks(content) {
+        const results = [];
+        
+        this.obsoleteFunctionBlocks.forEach(fb => {
+            if (!fb.pattern) return;
+            
+            // Reset regex lastIndex
+            fb.pattern.lastIndex = 0;
+            let match;
+            
+            while ((match = fb.pattern.exec(content)) !== null) {
+                // Calculate line number
+                const beforeMatch = content.substring(0, match.index);
+                const lineNumber = (beforeMatch.match(/\n/g) || []).length + 1;
+                
+                results.push({
+                    name: fb.name,
+                    match: match[0],
+                    index: match.index,
+                    line: lineNumber,
+                    replacement: fb.replacement,
+                    severity: fb.severity,
+                    category: fb.category,
+                    description: fb.description,
+                    notes: fb.notes,
+                    autoReplace: fb.autoReplace
+                });
+            }
+        });
+        
+        return results;
     },
 
     /**

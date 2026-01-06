@@ -769,6 +769,9 @@ class AS4Converter {
             case 'library_binary':
                 this.analyzeLibraryFile(path, content);
                 break;
+            case 'visualization':
+                this.analyzeVisualization(path, content);
+                break;
         }
     }
 
@@ -816,6 +819,30 @@ class AS4Converter {
                     });
                 }
             }
+        });
+        
+        // Check for obsolete function blocks
+        const obsoleteFBs = DeprecationDatabase.findObsoleteFunctionBlocks(content);
+        obsoleteFBs.forEach(fb => {
+            this.addFinding({
+                type: 'function_block',
+                name: fb.name,
+                severity: fb.severity,
+                description: fb.description,
+                replacement: { name: fb.replacement, description: fb.notes },
+                file: path,
+                line: fb.line,
+                context: this.getCodeContext(content, fb.index),
+                original: fb.match,
+                notes: fb.notes,
+                autoReplace: fb.autoReplace,
+                conversion: fb.autoReplace ? {
+                    type: 'function_block',
+                    from: fb.name,
+                    to: fb.replacement,
+                    automated: true
+                } : null
+            });
         });
     }
 
@@ -1017,23 +1044,51 @@ class AS4Converter {
         if (arMatch) {
             const arVersion = arMatch[1];
             const as6ArVersion = DeprecationDatabase.as6Format.automationRuntime.as6.version;
-            this.addFinding({
-                type: 'runtime',
-                name: 'Automation Runtime',
-                severity: 'warning',
-                description: `Automation Runtime: ${arVersion} → ${as6ArVersion}`,
-                file: path,
-                line: this.getLineNumber(content, arMatch.index),
-                replacement: { name: `AR ${as6ArVersion}`, description: 'Update to AS6 Automation Runtime' },
-                notes: `Automation Runtime must be updated from ${arVersion} to ${as6ArVersion} for AS6.`,
-                original: arMatch[0],
-                conversion: {
-                    type: 'ar_version',
-                    from: arVersion,
-                    to: as6ArVersion,
-                    automated: true
-                }
-            });
+            
+            // Validate minimum AR version for AS6 migration
+            const arValidation = DeprecationDatabase.validateARVersionForAS6(arVersion);
+            
+            if (!arValidation.valid) {
+                // AR version too old - this is a blocking issue
+                this.hasBlockingErrors = true;
+                this.addFinding({
+                    type: 'runtime',
+                    name: 'AR Version BLOCKING',
+                    severity: 'error',
+                    blocking: true,
+                    description: `AR ${arVersion} is below minimum ${arValidation.minimumDisplay} required for AS6`,
+                    file: path,
+                    line: this.getLineNumber(content, arMatch.index),
+                    notes: arValidation.message,
+                    original: arMatch[0],
+                    conversion: {
+                        type: 'ar_version_blocking',
+                        from: arVersion,
+                        to: null,
+                        automated: false,
+                        blocking: true
+                    }
+                });
+            } else {
+                // AR version OK - just needs upgrade to AS6 version
+                this.addFinding({
+                    type: 'runtime',
+                    name: 'Automation Runtime',
+                    severity: 'warning',
+                    description: `Automation Runtime: ${arVersion} → ${as6ArVersion}`,
+                    file: path,
+                    line: this.getLineNumber(content, arMatch.index),
+                    replacement: { name: `AR ${as6ArVersion}`, description: 'Update to AS6 Automation Runtime' },
+                    notes: `Automation Runtime must be updated from ${arVersion} to ${as6ArVersion} for AS6.`,
+                    original: arMatch[0],
+                    conversion: {
+                        type: 'ar_version',
+                        from: arVersion,
+                        to: as6ArVersion,
+                        automated: true
+                    }
+                });
+            }
         }
         
         // Check package file version
@@ -1409,6 +1464,68 @@ class AS4Converter {
     }
 
     // ==========================================
+    // VISUALIZATION ANALYSIS (VC3/VC4, mappView)
+    // ==========================================
+    
+    analyzeVisualization(path, content) {
+        const fileName = path.split(/[/\\]/).pop();
+        
+        // Check for VC3/VC4 usage using database helper
+        const vcDetection = DeprecationDatabase.detectVisualComponents(content);
+        
+        if (vcDetection.hasVC3) {
+            // VC3 is a BLOCKING error - project cannot be converted
+            this.hasBlockingErrors = true;
+            const vcConfig = DeprecationDatabase.as6Format.visualComponents.vc3;
+            
+            this.addFinding({
+                type: 'visualization',
+                name: `VC3 BLOCKING: ${fileName}`,
+                severity: 'error',
+                blocking: true,
+                description: vcConfig.description,
+                file: path,
+                notes: `${vcConfig.notes} Detected markers: ${vcDetection.vc3Markers.join(', ')}`,
+                original: vcDetection.vc3Markers.join(', '),
+                migration: vcConfig.migration,
+                conversion: {
+                    type: 'vc3_blocking',
+                    automated: false,
+                    blocking: true
+                }
+            });
+        }
+        
+        if (vcDetection.hasVC4) {
+            const vcConfig = DeprecationDatabase.as6Format.visualComponents.vc4;
+            
+            this.addFinding({
+                type: 'visualization',
+                name: `VC4: ${fileName}`,
+                severity: 'warning',
+                description: vcConfig.description,
+                file: path,
+                notes: `${vcConfig.notes} Recommended stack size: ${vcConfig.stackSizeRecommendation} bytes.`,
+                original: vcDetection.vc4Markers.join(', '),
+                migration: vcConfig.migration
+            });
+        }
+        
+        // Check for mappView content (not blocking)
+        if (content.includes('mappView') || content.includes('brease') || path.includes('mappView')) {
+            this.addFinding({
+                type: 'visualization',
+                name: `mappView: ${fileName}`,
+                severity: 'info',
+                description: 'mappView visualization file',
+                file: path,
+                notes: 'mappView is fully supported in AS6. Verify widget library versions.',
+                original: ''
+            });
+        }
+    }
+
+    // ==========================================
     // LIBRARY FILE ANALYSIS (.lby)
     // ==========================================
     
@@ -1531,6 +1648,54 @@ class AS4Converter {
         return lines.slice(start, end).join('\n');
     }
 
+    /**
+     * Replace a name in code, variable declarations, and comments
+     * This ensures comprehensive updates when renaming function blocks or functions
+     * @param {string} content - File content
+     * @param {string} oldName - Original name to replace
+     * @param {string} newName - New name to use
+     * @returns {string} - Updated content
+     */
+    replaceWithVariableAndCommentUpdates(content, oldName, newName) {
+        // 1. Replace in code (function block calls, type declarations)
+        // Use word boundary to avoid partial matches
+        const codePattern = new RegExp(`\\b${this.escapeRegex(oldName)}\\b`, 'g');
+        let result = content.replace(codePattern, newName);
+        
+        // 2. Replace in variable declarations (VAR ... END_VAR blocks)
+        // Pattern: variableName : OldFBType; or variableName : OldFBType := ...;
+        const varPattern = new RegExp(
+            `(:\\s*)${this.escapeRegex(oldName)}(\\s*(?:;|:=|\\())`, 
+            'g'
+        );
+        result = result.replace(varPattern, `$1${newName}$2`);
+        
+        // 3. Replace in single-line comments ( // ... )
+        const singleLineCommentPattern = new RegExp(
+            `(\\/\\/.*)\\b${this.escapeRegex(oldName)}\\b`, 
+            'g'
+        );
+        result = result.replace(singleLineCommentPattern, `$1${newName}`);
+        
+        // 4. Replace in multi-line comments ( (* ... *) )
+        const multiLinePattern = new RegExp(
+            `(\\(\\*[^*]*?)\\b${this.escapeRegex(oldName)}\\b([^*]*?\\*\\))`, 
+            'g'
+        );
+        result = result.replace(multiLinePattern, `$1${newName}$2`);
+        
+        return result;
+    }
+
+    /**
+     * Escape special regex characters in a string
+     * @param {string} str - String to escape
+     * @returns {string} - Escaped string safe for use in RegExp
+     */
+    escapeRegex(str) {
+        return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
     // ==========================================
     // ANALYSIS UI
     // ==========================================
@@ -1553,13 +1718,21 @@ class AS4Converter {
         this.elements.analysisResults.classList.remove('hidden');
         
         // Update summary counts
-        const counts = { error: 0, warning: 0, info: 0 };
-        this.analysisResults.forEach(f => counts[f.severity]++);
+        const counts = { error: 0, warning: 0, info: 0, blocking: 0 };
+        this.analysisResults.forEach(f => {
+            counts[f.severity]++;
+            if (f.blocking) counts.blocking++;
+        });
         
         this.elements.errorCount.textContent = counts.error;
         this.elements.warningCount.textContent = counts.warning;
         this.elements.infoCount.textContent = counts.info;
         this.elements.compatibleCount.textContent = this.projectFiles.size - this.analysisResults.length;
+        
+        // Show blocking error banner if there are blocking issues
+        if (this.hasBlockingErrors || counts.blocking > 0) {
+            this.showBlockingErrorBanner(counts.blocking);
+        }
         
         // Render findings list
         this.renderFindingsList();
@@ -1577,11 +1750,14 @@ class AS4Converter {
             technology_package: [],
             package: [],
             library: [],
+            library_version: [],
             function: [],
+            function_block: [],
             hardware: [],
             task_config: [],
             motion: [],
-            localization: []
+            localization: [],
+            visualization: []
         };
         
         this.getFilteredFindings().forEach(finding => {
@@ -1618,9 +1794,94 @@ class AS4Converter {
         this.updateSelectedCount();
     }
 
+    /**
+     * Show a prominent banner for blocking errors that prevent AS6 conversion
+     * @param {number} blockingCount - Number of blocking issues
+     */
+    showBlockingErrorBanner(blockingCount) {
+        // Remove existing banner if present
+        const existingBanner = document.getElementById('blockingErrorBanner');
+        if (existingBanner) {
+            existingBanner.remove();
+        }
+        
+        // Create blocking error banner
+        const banner = document.createElement('div');
+        banner.id = 'blockingErrorBanner';
+        banner.className = 'blocking-error-banner';
+        banner.innerHTML = `
+            <div class="blocking-error-content">
+                <span class="blocking-icon">🚫</span>
+                <div class="blocking-text">
+                    <strong>BLOCKING ERRORS DETECTED</strong>
+                    <p>${blockingCount} issue(s) must be resolved before AS6 conversion is possible.</p>
+                </div>
+                <button class="btn btn-small" onclick="document.getElementById('severityFilter').value='error'; window.converter.filterFindings();">
+                    Show Blocking Issues
+                </button>
+            </div>
+        `;
+        
+        // Add banner styling if not present
+        if (!document.getElementById('blockingBannerStyles')) {
+            const style = document.createElement('style');
+            style.id = 'blockingBannerStyles';
+            style.textContent = `
+                .blocking-error-banner {
+                    background: linear-gradient(135deg, #c0392b 0%, #e74c3c 100%);
+                    color: white;
+                    padding: 15px 20px;
+                    border-radius: 8px;
+                    margin-bottom: 15px;
+                    box-shadow: 0 4px 12px rgba(192, 57, 43, 0.3);
+                    animation: pulse-warning 2s infinite;
+                }
+                @keyframes pulse-warning {
+                    0%, 100% { box-shadow: 0 4px 12px rgba(192, 57, 43, 0.3); }
+                    50% { box-shadow: 0 4px 20px rgba(192, 57, 43, 0.5); }
+                }
+                .blocking-error-content {
+                    display: flex;
+                    align-items: center;
+                    gap: 15px;
+                }
+                .blocking-icon {
+                    font-size: 32px;
+                }
+                .blocking-text p {
+                    margin: 5px 0 0 0;
+                    opacity: 0.9;
+                }
+                .blocking-error-banner .btn {
+                    background: white;
+                    color: #c0392b;
+                    border: none;
+                    flex-shrink: 0;
+                }
+                .finding-card.severity-error.blocking {
+                    border-left: 4px solid #c0392b;
+                    background: linear-gradient(to right, rgba(192, 57, 43, 0.1), transparent);
+                }
+            `;
+            document.head.appendChild(style);
+        }
+        
+        // Insert banner before the filter bar
+        const filterBar = document.querySelector('.filter-bar');
+        if (filterBar && filterBar.parentNode) {
+            filterBar.parentNode.insertBefore(banner, filterBar);
+        }
+        
+        // Disable download button when blocking errors exist
+        if (this.elements.btnDownload) {
+            this.elements.btnDownload.disabled = true;
+            this.elements.btnDownload.title = 'Cannot download - blocking errors must be resolved first';
+        }
+    }
+
     createFindingCard(finding) {
         const card = document.createElement('div');
-        card.className = `finding-card severity-${finding.severity}`;
+        card.className = `finding-card severity-${finding.severity}${finding.blocking ? ' blocking' : ''}`;
         card.dataset.id = finding.id;
         
         const isSelected = this.selectedFindings.has(finding.id);
@@ -1631,10 +1892,12 @@ class AS4Converter {
                     <input type="checkbox" ${isSelected ? 'checked' : ''}>
                     <span class="finding-name">${finding.name}</span>
                 </label>
+                ${finding.blocking ? '<span class="blocking-badge">🚫 BLOCKING</span>' : ''}
                 <span class="severity-badge ${finding.severity}">${finding.severity.toUpperCase()}</span>
             </div>
             <div class="finding-body">
                 <p class="finding-description">${finding.description}</p>
+                ${finding.blocking ? `<div class="blocking-warning">⚠️ This issue must be resolved before AS6 conversion is possible.</div>` : ''}
                 <div class="finding-meta">
                     <span class="finding-file">📄 ${finding.file}</span>
                     ${finding.line ? `<span class="finding-line">Line ${finding.line}</span>` : ''}
@@ -1646,6 +1909,7 @@ class AS4Converter {
                     </div>
                 ` : '<div class="finding-replacement warning">No direct replacement available</div>'}
                 ${finding.notes ? `<div class="finding-notes"><strong>Notes:</strong> ${finding.notes}</div>` : ''}
+                ${finding.migration ? `<div class="finding-migration"><strong>Migration:</strong> ${finding.migration}</div>` : ''}
                 ${finding.eol ? `<div class="finding-eol"><strong>End of Life:</strong> ${finding.eol}</div>` : ''}
             </div>
             <div class="finding-actions">
@@ -1781,7 +2045,9 @@ class AS4Converter {
     getTypeIcon(type) {
         const icons = {
             library: '📚',
+            library_version: '📚',
             function: '⚙️',
+            function_block: '🧩',
             hardware: '🔌',
             project: '📁',
             technology_package: '📦',
@@ -1790,7 +2056,8 @@ class AS4Converter {
             motion: '🔄',
             localization: '🌐',
             compiler: '🛠️',
-            runtime: '▶️'
+            runtime: '▶️',
+            visualization: '🖥️'
         };
         return icons[type] || '📄';
     }
@@ -1798,7 +2065,9 @@ class AS4Converter {
     formatTypeName(type) {
         const names = {
             library: 'Libraries',
-            function: 'Functions & Function Blocks',
+            library_version: 'Library Versions',
+            function: 'Functions',
+            function_block: 'Function Blocks',
             hardware: 'Hardware Modules',
             project: 'Project Format',
             technology_package: 'Technology Packages',
@@ -1807,7 +2076,8 @@ class AS4Converter {
             motion: 'Motion & Axis',
             localization: 'Localization (TMX)',
             compiler: 'Compiler Settings',
-            runtime: 'Automation Runtime'
+            runtime: 'Automation Runtime',
+            visualization: 'Visualization (VC3/VC4)'
         };
         return names[type] || type;
     }
@@ -2047,6 +2317,18 @@ class AS4Converter {
                 // No action needed
                 convertedContent = originalContent;
             }
+        } else if (finding.type === 'function_block' && finding.conversion && finding.autoReplace) {
+            // Function block replacement with variable and comment updates
+            const oldName = finding.conversion.from;
+            const newName = finding.conversion.to;
+            
+            // Replace all occurrences of the function block name
+            // This covers: FB type declarations, FB calls, and references
+            convertedContent = this.replaceWithVariableAndCommentUpdates(originalContent, oldName, newName);
+            
+            // Track variable replacements for cross-file consistency
+            this.functionBlockReplacements = this.functionBlockReplacements || new Map();
+            this.functionBlockReplacements.set(oldName, newName);
         } else {
             // Standard text replacement conversion
             const conversion = this.generateConversion(finding);
@@ -2421,6 +2703,14 @@ class AS4Converter {
     }
 
     async downloadConvertedProject() {
+        // Check for blocking errors before allowing download
+        if (this.hasBlockingErrors) {
+            const blockingFindings = this.analysisResults.filter(f => f.blocking || f.severity === 'error');
+            const blockingMessages = blockingFindings.map(f => `• ${f.name}: ${f.description}`).join('\n');
+            alert(`Cannot download converted project - blocking errors found:\n\n${blockingMessages}\n\nResolve these issues in the source AS4 project before migrating to AS6.`);
+            return;
+        }
+        
         // Check if JSZip is available
         if (typeof JSZip === 'undefined') {
             alert('JSZip library not loaded. Please check your internet connection and refresh the page.');
