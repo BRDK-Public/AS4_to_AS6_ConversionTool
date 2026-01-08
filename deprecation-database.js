@@ -181,8 +181,8 @@ const DeprecationDatabase = {
             'Acp10sim': { techPackage: 'Acp10Arnc0', as6Version: '6.2.0', as6LibVersion: '6.2.0' },
             'NcGlobal': { techPackage: 'Acp10Arnc0', as6Version: '6.2.0', as6LibVersion: '6.2.0' },
             
-            // MpBase - Core mapp component (upgraded to 6.5.0 in AS6)
-            'MpBase': { techPackage: 'mappServices', as6Version: '6.5.0', as6LibVersion: '6.5.0' },
+            // MpBase - Core mapp component (in Library_2 with version subfolder)
+            'MpBase': { source: 'Library_2', as6LibVersion: 'V6.5.0' },
             
             // mappSafety (6.2.0) - Safety libraries
             'SfDomain': { techPackage: 'mappSafety', as6Version: '6.2.0', as6LibVersion: '6.2.0' },
@@ -828,6 +828,22 @@ const DeprecationDatabase = {
             ]
         },
         {
+            id: "lib_asstr",
+            name: "AsStr",
+            severity: "error",
+            category: "utilities",
+            description: "Legacy string library - replaced by AsBrStr in AS6",
+            replacement: { name: "AsBrStr", description: "B&R string library with memory functions" },
+            notes: "AsStr functions replaced: memset→brsmemset, memcpy→brsmemcpy, memcmp→brsmemcmp",
+            removedIn: "AS6.0",
+            functionMappings: [
+                { old: "memset", new: "brsmemset", notes: "Same interface - use AsBrStr library" },
+                { old: "memcpy", new: "brsmemcpy", notes: "Same interface - use AsBrStr library" },
+                { old: "memcmp", new: "brsmemcmp", notes: "Same interface - use AsBrStr library" },
+                { old: "memmove", new: "brsmemmove", notes: "Same interface - use AsBrStr library" }
+            ]
+        },
+        {
             id: "lib_asmath",
             name: "AsMath",
             severity: "error",
@@ -960,22 +976,33 @@ const DeprecationDatabase = {
     // ==========================================
     functions: [
         {
-            id: "func_brsmemcpy",
-            name: "brsmemcpy",
-            library: "AsBrStr",
-            severity: "info",
-            description: "Memory copy function",
-            replacement: { name: "memcpy", library: "runtime", notes: "Use standard memcpy" },
-            pattern: /brsmemcpy\s*\(/gi
+            id: "func_memcpy",
+            name: "memcpy",
+            library: "runtime",
+            severity: "warning",
+            description: "Standard C memcpy - use brsmemcpy in AS6 Structured Text",
+            replacement: { name: "brsmemcpy", library: "AsBrStr", notes: "Use brsmemcpy from AsBrStr library" },
+            pattern: /\bmemcpy\s*\(/gi,
+            autoReplace: true
         },
         {
-            id: "func_brsmemset",
-            name: "brsmemset",
-            library: "AsBrStr",
-            severity: "info",
-            description: "Memory set function",
-            replacement: { name: "memset", library: "runtime", notes: "Use standard memset" },
-            pattern: /brsmemset\s*\(/gi
+            id: "func_memset",
+            name: "memset",
+            library: "runtime",
+            severity: "warning",
+            description: "Standard C memset - use brsmemset in AS6 Structured Text",
+            replacement: { name: "brsmemset", library: "AsBrStr", notes: "Use brsmemset from AsBrStr library" },
+            pattern: /\bmemset\s*\(/gi,
+            autoReplace: true
+        },
+        {
+            id: "func_memcmp",
+            name: "memcmp",
+            library: "runtime",
+            severity: "warning",
+            description: "Standard C memcmp - use brsmemcmp in AS6 Structured Text",
+            replacement: { name: "brsmemcmp", library: "AsBrStr", notes: "Use brsmemcmp from AsBrStr library" },
+            pattern: /\bmemcmp\s*\(/gi
         },
         {
             id: "func_datobj",

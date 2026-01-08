@@ -283,6 +283,33 @@
             </div>
         </div>
 
+        <!-- Technology Package Requirements Dialog -->
+        <div id="techPackageDialog" class="progress-dialog hidden">
+            <div class="progress-dialog-content tech-package-dialog">
+                <h3>📦 Technology Package Libraries Detected</h3>
+                <p class="dialog-description">
+                    The following technology packages are used by your project. 
+                    The AS6-compatible library files will be <strong>included automatically</strong> in the download.
+                </p>
+                <div id="techPackageList" class="tech-package-list"></div>
+                
+                <div class="dialog-info">
+                    <p><strong>✅ AS6 Libraries Included</strong></p>
+                    <p>The converted project will include the correct AS6 versions of these libraries.
+                    No additional steps are required after extraction.</p>
+                </div>
+                
+                <div class="dialog-buttons">
+                    <button id="btnTechPackageContinue" class="btn btn-primary">
+                        ✅ Continue Download
+                    </button>
+                    <button id="btnTechPackageCancel" class="btn btn-secondary">
+                        ❌ Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <footer class="app-footer">
             <p>AS4 to AS6 Conversion Tool v2.0 | B&R Automation Studio Migration Assistant</p>
             <p class="footer-subtitle">Updated with verified AS6 format support (AS6.5.0.305)</p>

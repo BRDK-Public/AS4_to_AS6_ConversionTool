@@ -254,12 +254,26 @@ class AS4Converter {
                 });
             } else if (item.isDirectory) {
                 const dirReader = item.createReader();
-                dirReader.readEntries(async entries => {
-                    for (const entry of entries) {
-                        await this.traverseFileTree(entry, files, path + item.name + '/');
-                    }
-                    resolve();
-                });
+                const allEntries = [];
+                
+                // readEntries may not return all entries in one call - must call repeatedly
+                const readAllEntries = () => {
+                    dirReader.readEntries(async entries => {
+                        if (entries.length > 0) {
+                            allEntries.push(...entries);
+                            // Continue reading - there may be more entries
+                            readAllEntries();
+                        } else {
+                            // No more entries - process all collected entries
+                            for (const entry of allEntries) {
+                                await this.traverseFileTree(entry, files, path + item.name + '/');
+                            }
+                            resolve();
+                        }
+                    });
+                };
+                
+                readAllEntries();
             }
         });
     }
@@ -267,6 +281,15 @@ class AS4Converter {
     handleFolderSelect(files) {
         try {
             const fileArray = Array.from(files);
+            
+            // Debug: Log all incoming files
+            console.log(`Total files received from browser: ${fileArray.length}`);
+            const binaryFiles = fileArray.filter(f => {
+                const ext = this.getFileExtension(f.name);
+                return ['.a', '.br', '.o'].includes(ext);
+            });
+            console.log(`Binary files (.a, .br, .o) received: ${binaryFiles.length}`);
+            binaryFiles.forEach(f => console.log(`  - ${f.webkitRelativePath || f.name}`));
             
             // Edge browser workaround: process files in smaller batches
             if (this.isEdgeBrowser && fileArray.length > 50) {
@@ -299,6 +322,8 @@ class AS4Converter {
             '.iom', '.vvm',
             // Libraries
             '.lby', '.br',
+            // Library binary files (for user libraries that need their compiled binaries)
+            '.a', '.o',
             // ANSI C source files (critical for custom libraries)
             '.c', '.h',
             // mappView / Visualization
@@ -346,6 +371,14 @@ class AS4Converter {
             return relevantExtensions.includes(ext);
         });
         
+        // Debug: Log filtered binary files
+        const filteredBinaryFiles = relevantFiles.filter(f => {
+            const ext = this.getFileExtension(f.name);
+            return ['.a', '.br', '.o'].includes(ext);
+        });
+        console.log(`Binary files after filtering: ${filteredBinaryFiles.length}`);
+        filteredBinaryFiles.slice(0, 10).forEach(f => console.log(`  - ${f.webkitRelativePath || f.name}`));
+        
         // Show progress
         this.elements.btnScan.textContent = `Loading... 0/${relevantFiles.length}`;
         this.elements.btnScan.disabled = true;
@@ -358,12 +391,14 @@ class AS4Converter {
                     const content = await this.readFileContent(file);
                     const ext = this.getFileExtension(file.name);
                     const type = this.getFileType(ext);
+                    const isBinary = AS4Converter.BINARY_EXTENSIONS.includes(ext);
                     
                     this.projectFiles.set(file.relativePath || file.webkitRelativePath || file.name, {
                         content,
                         type,
                         name: file.name,
-                        extension: ext
+                        extension: ext,
+                        isBinary: isBinary
                     });
                 } catch (err) {
                     console.warn(`Failed to read file: ${file.name}`, err);
@@ -405,6 +440,8 @@ class AS4Converter {
                 '.iom', '.vvm',
                 // Libraries
                 '.lby', '.br',
+                // Library binary files (for user libraries that need their compiled binaries)
+                '.a', '.o',
                 // ANSI C source files (critical for custom libraries)
                 '.c', '.h',
                 // mappView / Visualization
@@ -454,18 +491,28 @@ class AS4Converter {
                 return relevantExtensions.includes(ext);
             });
             
+            // Debug: Log filtered binary files
+            const filteredBinaryFiles = relevantFiles.filter(f => {
+                const ext = this.getFileExtension(f.name);
+                return ['.a', '.br', '.o'].includes(ext);
+            });
+            console.log(`Binary files after filtering (processFiles): ${filteredBinaryFiles.length}`);
+            filteredBinaryFiles.slice(0, 10).forEach(f => console.log(`  - ${f.webkitRelativePath || f.name}`));
+            
             // Process files with error handling
             for (const file of relevantFiles) {
                 try {
                     const content = await this.readFileContent(file);
                     const ext = this.getFileExtension(file.name);
                     const type = this.getFileType(ext);
+                    const isBinary = AS4Converter.BINARY_EXTENSIONS.includes(ext);
                     
                     this.projectFiles.set(file.relativePath || file.webkitRelativePath || file.name, {
                         content,
                         type,
                         name: file.name,
-                        extension: ext
+                        extension: ext,
+                        isBinary: isBinary
                     });
                 } catch (err) {
                     console.warn(`Skipping file ${file.name}:`, err);
@@ -479,9 +526,14 @@ class AS4Converter {
         }
     }
 
+    // Binary file extensions that should not be read as text
+    static BINARY_EXTENSIONS = ['.a', '.o', '.br', '.png', '.jpg', '.gif', '.bmp', '.ico', '.svg'];
+    
     readFileContent(file) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
+            const ext = this.getFileExtension(file.name);
+            const isBinary = AS4Converter.BINARY_EXTENSIONS.includes(ext);
             
             // Add timeout for Edge browser issues
             const timeout = setTimeout(() => {
@@ -503,7 +555,11 @@ class AS4Converter {
             };
             
             try {
-                reader.readAsText(file);
+                if (isBinary) {
+                    reader.readAsArrayBuffer(file);
+                } else {
+                    reader.readAsText(file);
+                }
             } catch (err) {
                 clearTimeout(timeout);
                 reject(err);
@@ -558,6 +614,8 @@ class AS4Converter {
             // Library files
             '.lby': 'library_binary',
             '.br': 'library_binary',
+            '.a': 'library_binary',
+            '.o': 'library_binary',
             
             // mappView / Visualization
             '.content': 'visualization',
@@ -781,6 +839,9 @@ class AS4Converter {
             // Auto-apply library version updates for technology package libraries
             this.autoApplyLibraryVersionUpdates();
             
+            // Auto-apply function replacements (memset→brsmemset, etc.)
+            this.autoApplyFunctionReplacements();
+            
             // Update UI
             this.displayAnalysisResults();
             this.switchTab('analysis');
@@ -795,6 +856,11 @@ class AS4Converter {
     }
 
     async analyzeFile(path, file) {
+        // Skip binary files - they can't be analyzed as text
+        if (file.isBinary) {
+            return;
+        }
+        
         const content = file.content;
         
         // Analyze based on file type
@@ -1752,6 +1818,454 @@ class AS4Converter {
         });
         
         console.log('Library version updates completed');
+    }
+
+    autoApplyFunctionReplacements() {
+        console.log('Auto-applying function replacements...');
+        
+        // Get all function patterns with autoReplace: true
+        const autoReplaceFunctions = DeprecationDatabase.functions.filter(f => f.autoReplace === true);
+        
+        if (autoReplaceFunctions.length === 0) {
+            console.log('No auto-replace function patterns found');
+            return;
+        }
+        
+        console.log(`Found ${autoReplaceFunctions.length} auto-replace function patterns`);
+        
+        // Process each file that might contain these functions
+        this.projectFiles.forEach((file, filePath) => {
+            // Skip binary files
+            if (file.isBinary) {
+                return;
+            }
+            
+            // Only process source files (.st, .c, .cpp)
+            const ext = filePath.toLowerCase().split('.').pop();
+            if (!['st', 'c', 'cpp', 'h'].includes(ext)) {
+                return;
+            }
+            
+            let content = file.content;
+            let modified = false;
+            
+            autoReplaceFunctions.forEach(funcPattern => {
+                if (!funcPattern.replacement || !funcPattern.replacement.name) {
+                    return;
+                }
+                
+                const oldFunc = funcPattern.name;
+                const newFunc = funcPattern.replacement.name;
+                
+                // Create a pattern to match the function call
+                const pattern = new RegExp('\\b' + oldFunc + '\\s*\\(', 'gi');
+                
+                if (pattern.test(content)) {
+                    console.log(`Replacing ${oldFunc} with ${newFunc} in ${filePath}`);
+                    
+                    // Replace the function name (preserving the opening parenthesis)
+                    content = content.replace(pattern, newFunc + '(');
+                    modified = true;
+                    
+                    // Add a finding for the replacement
+                    this.addFinding({
+                        type: 'function',
+                        name: oldFunc,
+                        file: filePath,
+                        severity: 'info',
+                        status: 'applied',
+                        replacement: funcPattern.replacement,
+                        notes: `[Auto-applied: ${oldFunc} → ${newFunc}]`
+                    });
+                }
+            });
+            
+            if (modified) {
+                file.content = content;
+            }
+        });
+        
+        console.log('Function replacements completed');
+    }
+
+    getRequiredTechnologyPackages() {
+        // Collect all technology packages and libraries that need to be included
+        const requiredPackages = new Map(); // packageName -> { version, libraries: Map, isLibrary2: bool }
+        const detectedLibraries = new Set(); // All library names detected in the project
+        
+        // Build a case-insensitive lookup for library mappings
+        const libraryMappingLower = {};
+        const libraryMappingOriginalCase = {};
+        Object.entries(DeprecationDatabase.as6Format.libraryMapping).forEach(([key, value]) => {
+            libraryMappingLower[key.toLowerCase()] = value;
+            libraryMappingOriginalCase[key.toLowerCase()] = key; // Keep original case for index lookup
+        });
+        
+        // Helper to add a library to the required packages
+        const addLibrary = (libName) => {
+            const libNameLower = libName.toLowerCase();
+            const mapping = libraryMappingLower[libNameLower];
+            const originalCaseLibName = libraryMappingOriginalCase[libNameLower] || libName;
+            if (!mapping) return;
+            
+            if (mapping.techPackage) {
+                // Technology Package library
+                const packageName = mapping.techPackage;
+                const version = mapping.as6Version || '6.0.0';
+                const libVersion = mapping.as6LibVersion || version;
+                
+                if (!requiredPackages.has(packageName)) {
+                    requiredPackages.set(packageName, {
+                        version: version,
+                        libraries: new Map(),
+                        isLibrary2: false
+                    });
+                }
+                
+                // Use originalCaseLibName to match the index file casing
+                requiredPackages.get(packageName).libraries.set(originalCaseLibName, {
+                    version: libVersion,
+                    source: 'TechnologyPackage'
+                });
+            } else if (mapping.source === 'Library_2') {
+                // Library_2 library
+                const libVersion = mapping.as6LibVersion;
+                
+                if (!requiredPackages.has('Library_2')) {
+                    requiredPackages.set('Library_2', {
+                        version: null,
+                        libraries: new Map(),
+                        isLibrary2: true
+                    });
+                }
+                
+                // Use originalCaseLibName to match the index file casing
+                requiredPackages.get('Library_2').libraries.set(originalCaseLibName, {
+                    version: libVersion,
+                    source: 'Library_2'
+                });
+            }
+        };
+        
+        // Method 1: Scan .lby files for <Dependency> tags
+        this.projectFiles.forEach((file, path) => {
+            if (!path.toLowerCase().endsWith('.lby')) return;
+            if (typeof file.content !== 'string') return;
+            
+            // Extract dependencies from XML: <Dependency ObjectName="LibName" />
+            const depPattern = /ObjectName\s*=\s*["']([^"']+)["']/gi;
+            let match;
+            while ((match = depPattern.exec(file.content)) !== null) {
+                const libName = match[1];
+                detectedLibraries.add(libName);
+            }
+        });
+        
+        // Method 2: Scan code files for library references
+        // Look for known library prefixes in function calls and type references
+        const libraryPrefixes = Object.keys(DeprecationDatabase.as6Format.libraryMapping);
+        
+        this.projectFiles.forEach((file, path) => {
+            const ext = path.toLowerCase().split('.').pop();
+            if (!['st', 'c', 'h', 'typ', 'var', 'fun'].includes(ext)) return;
+            if (typeof file.content !== 'string') return;
+            
+            // Check for each known library name in the content
+            for (const libName of libraryPrefixes) {
+                // Look for library usage patterns: LibName_Function, LibName.Type, LibNameFunc
+                const patterns = [
+                    new RegExp(`\\b${libName}_\\w+`, 'i'),      // LibName_Function
+                    new RegExp(`\\b${libName}[A-Z]\\w*`, 'i'),  // LibNameFunction (camelCase)
+                    new RegExp(`\\bADR\\s*\\(\\s*${libName}`, 'i'), // ADR(libName references
+                ];
+                
+                for (const pattern of patterns) {
+                    if (pattern.test(file.content)) {
+                        detectedLibraries.add(libName);
+                        break;
+                    }
+                }
+            }
+        });
+        
+        // Method 3: Check for libraries in project's Libraries folder
+        this.projectFiles.forEach((file, path) => {
+            const pathLower = path.toLowerCase();
+            if (!pathLower.includes('/libraries/') && !pathLower.includes('\\libraries\\')) {
+                return;
+            }
+            
+            const pathParts = path.split(/[/\\]/);
+            const libIndex = pathParts.findIndex(p => p.toLowerCase() === 'libraries');
+            if (libIndex >= 0 && libIndex < pathParts.length - 1) {
+                const libName = pathParts[libIndex + 1];
+                detectedLibraries.add(libName);
+            }
+        });
+        
+        console.log(`Detected ${detectedLibraries.size} library references:`, Array.from(detectedLibraries).join(', '));
+        
+        // Add all detected libraries to required packages
+        detectedLibraries.forEach(libName => {
+            const libNameLower = libName.toLowerCase();
+            const mapping = libraryMappingLower[libNameLower];
+            if (mapping) {
+                console.log(`  Library '${libName}' -> mapped to`, mapping);
+                addLibrary(libName);
+            } else {
+                console.log(`  Library '${libName}' -> NO MAPPING (customized library, will not be replaced)`);
+            }
+        });
+        
+        console.log(`Required packages: ${requiredPackages.size}`);
+        requiredPackages.forEach((pkg, name) => {
+            console.log(`  ${name}: ${pkg.libraries.size} libraries - ${Array.from(pkg.libraries.keys()).join(', ')}`);
+        });
+        
+        return requiredPackages;
+    }
+
+    generateLibraryCopyScript(requiredPackages) {
+        // DEPRECATED - no longer used
+        // AS6 libraries are now fetched from LibrariesForAS6 folder and included directly
+        return '';
+    }
+
+    /**
+     * Load the AS6 libraries index from the server
+     * This index contains the file lists for all available AS6 libraries
+     */
+    async loadAS6LibrariesIndex() {
+        if (this.as6LibrariesIndex) {
+            return this.as6LibrariesIndex;
+        }
+        
+        // Check if we're running from file:// protocol - fetch won't work
+        if (window.location.protocol === 'file:') {
+            console.error('Cannot load AS6 libraries when running from file:// protocol.');
+            console.error('Please run this tool via a local web server:');
+            console.error('  Option 1: npx http-server (if Node.js is installed)');
+            console.error('  Option 2: python -m http.server 8080');
+            console.error('  Option 3: Use VS Code Live Server extension');
+            return null;
+        }
+        
+        try {
+            const response = await fetch('as6-libraries-index.json');
+            if (!response.ok) {
+                throw new Error(`Failed to load AS6 libraries index: ${response.status}`);
+            }
+            this.as6LibrariesIndex = await response.json();
+            console.log('AS6 libraries index loaded:', 
+                Object.keys(this.as6LibrariesIndex.Library_2 || {}).length, 'Library_2 libraries,',
+                Object.keys(this.as6LibrariesIndex.TechnologyPackages || {}).length, 'technology packages');
+            return this.as6LibrariesIndex;
+        } catch (error) {
+            console.error('Failed to load AS6 libraries index:', error);
+            console.error('Make sure you are running this tool via a local web server (not opening the HTML file directly)');
+            return null;
+        }
+    }
+
+    /**
+     * Fetch AS6 library files from the LibrariesForAS6 folder on the server
+     * @param {Map} requiredPackages - Map of required packages from getRequiredTechnologyPackages()
+     * @param {Function} progressCallback - Optional callback for progress updates
+     * @returns {Promise<Map>} - Map of relativePath -> { content, isBinary } for all library files
+     */
+    async fetchAS6LibraryFiles(requiredPackages, progressCallback) {
+        const libraryFiles = new Map(); // relativePath -> { content, isBinary }
+        const baseUrl = 'LibrariesForAS6';
+        
+        // Load the index
+        const index = await this.loadAS6LibrariesIndex();
+        if (!index) {
+            console.warn('Could not load AS6 libraries index, skipping library replacement');
+            return libraryFiles;
+        }
+        
+        // Collect all files we need to fetch
+        const filesToFetch = [];
+        
+        console.log('Processing requiredPackages for library file fetching:', requiredPackages.size, 'packages');
+        
+        for (const [packageName, pkgInfo] of requiredPackages) {
+            console.log(`  Package: ${packageName}, isLibrary2: ${pkgInfo.isLibrary2}, libraries:`, Array.from(pkgInfo.libraries.keys()));
+            
+            for (const [libName, libInfo] of pkgInfo.libraries) {
+                let files = [];
+                let basePath = '';
+                let hasVersionFolder = false;
+                let targetVersionPrefix = '';
+                
+                if (pkgInfo.isLibrary2) {
+                    // Library_2 library
+                    const allFiles = index.Library_2?.[libName] || [];
+                    console.log(`    Library_2 lookup for '${libName}': found ${allFiles.length} files`);
+                    basePath = `${baseUrl}/Library_2/${libName}`;
+                    
+                    // Check if this library has version subfolders by looking at file paths
+                    // Files like "V6.5.0/Binary.lby" indicate version folders
+                    const hasVersionSubfolders = allFiles.some(f => /^V\d+\.\d+\.\d+\//.test(f));
+                    
+                    if (hasVersionSubfolders && libInfo.version) {
+                        // Filter to only files for the target version
+                        targetVersionPrefix = libInfo.version.startsWith('V') ? libInfo.version : `V${libInfo.version}`;
+                        files = allFiles.filter(f => f.startsWith(targetVersionPrefix + '/'));
+                        hasVersionFolder = true;
+                        console.log(`Library ${libName}: using version ${targetVersionPrefix}, found ${files.length} files`);
+                    } else {
+                        // No version subfolders, use all files directly
+                        files = allFiles;
+                    }
+                } else {
+                    // Technology Package library - find the right version
+                    const pkgVersions = index.TechnologyPackages?.[packageName];
+                    console.log(`    TechPkg lookup for '${packageName}' version '${pkgInfo.version}': pkgVersions exists: ${!!pkgVersions}`);
+                    if (pkgVersions) {
+                        // Try exact version first, then find closest
+                        const versionData = pkgVersions[pkgInfo.version];
+                        console.log(`      Version '${pkgInfo.version}' data exists: ${!!versionData}, lib '${libName}' exists: ${!!(versionData && versionData[libName])}`);
+                        if (versionData && versionData[libName]) {
+                            const libData = versionData[libName];
+                            files = libData.files || [];
+                            basePath = `${baseUrl}/TechnologyPackages/${packageName}/${pkgInfo.version}/Library/${libName}/${libData.version}`;
+                            console.log(`      Found ${files.length} files for ${libName}, basePath: ${basePath}`);
+                        }
+                    }
+                }
+                
+                if (files.length > 0) {
+                    for (const file of files) {
+                        // For version-folder libraries, strip the version prefix from target path
+                        let targetFile = file;
+                        if (hasVersionFolder && targetVersionPrefix) {
+                            targetFile = file.substring(targetVersionPrefix.length + 1); // +1 for the /
+                        }
+                        
+                        filesToFetch.push({
+                            url: `${basePath}/${file}`,
+                            targetPath: `Libraries/${libName}/${targetFile}`,
+                            libName
+                        });
+                    }
+                } else {
+                    console.warn(`Library ${libName} not found in AS6 libraries index`);
+                }
+            }
+        }
+        
+        console.log(`Fetching ${filesToFetch.length} AS6 library files...`);
+        
+        // Fetch files in batches to avoid overwhelming the browser
+        const batchSize = 20;
+        let fetched = 0;
+        
+        for (let i = 0; i < filesToFetch.length; i += batchSize) {
+            const batch = filesToFetch.slice(i, i + batchSize);
+            
+            const results = await Promise.allSettled(
+                batch.map(async (fileInfo) => {
+                    const isBinary = this.isBinaryFile(fileInfo.url);
+                    try {
+                        const response = await fetch(fileInfo.url);
+                        if (response.ok) {
+                            const content = isBinary 
+                                ? await response.arrayBuffer() 
+                                : await response.text();
+                            return { 
+                                path: fileInfo.targetPath, 
+                                content, 
+                                isBinary,
+                                success: true 
+                            };
+                        }
+                    } catch (e) {
+                        // File fetch failed
+                    }
+                    return { path: fileInfo.targetPath, success: false };
+                })
+            );
+            
+            for (const result of results) {
+                if (result.status === 'fulfilled' && result.value.success) {
+                    libraryFiles.set(result.value.path, {
+                        content: result.value.content,
+                        isBinary: result.value.isBinary
+                    });
+                    fetched++;
+                }
+            }
+            
+            if (progressCallback) {
+                progressCallback(fetched, filesToFetch.length);
+            }
+        }
+        
+        console.log(`Successfully fetched ${fetched}/${filesToFetch.length} AS6 library files`);
+        return libraryFiles;
+    }
+
+    isBinaryFile(filename) {
+        const ext = filename.split('.').pop().toLowerCase();
+        return ['a', 'o', 'br', 'png', 'jpg', 'gif', 'bmp', 'ico'].includes(ext);
+    }
+
+    showTechnologyPackageDialog(requiredPackages) {
+        return new Promise((resolve) => {
+            const dialog = document.getElementById('techPackageDialog');
+            const listContainer = document.getElementById('techPackageList');
+            const btnContinue = document.getElementById('btnTechPackageContinue');
+            const btnCancel = document.getElementById('btnTechPackageCancel');
+            
+            // Build the list of required packages
+            let listHTML = '';
+            requiredPackages.forEach((info, packageName) => {
+                // Get library names from the Map keys
+                const libNames = Array.from(info.libraries.keys());
+                const librariesList = libNames.slice(0, 5).join(', ');
+                const moreLibs = libNames.length > 5 ? `, +${libNames.length - 5} more` : '';
+                
+                // Use different icon and format for Library_2 vs Technology Packages
+                const icon = info.isLibrary2 ? '📁' : '📦';
+                const versionText = info.version ? `<span class="tech-package-version">v${info.version}</span>` : '<span class="tech-package-version">(bundled with AS6)</span>';
+                
+                listHTML += `
+                    <div class="tech-package-item">
+                        <span class="tech-package-icon">${icon}</span>
+                        <div class="tech-package-info">
+                            <div class="tech-package-name">
+                                ${packageName} ${versionText}
+                            </div>
+                            <div class="tech-package-libraries">
+                                Libraries: ${librariesList}${moreLibs}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            listContainer.innerHTML = listHTML;
+            dialog.classList.remove('hidden');
+            
+            // Handle button clicks
+            const handleContinue = () => {
+                dialog.classList.add('hidden');
+                btnContinue.removeEventListener('click', handleContinue);
+                btnCancel.removeEventListener('click', handleCancel);
+                resolve({ continue: true });
+            };
+            
+            const handleCancel = () => {
+                dialog.classList.add('hidden');
+                btnContinue.removeEventListener('click', handleContinue);
+                btnCancel.removeEventListener('click', handleCancel);
+                resolve({ continue: false });
+            };
+            
+            btnContinue.addEventListener('click', handleContinue);
+            btnCancel.addEventListener('click', handleCancel);
+        });
     }
 
     addFinding(finding) {
@@ -2847,6 +3361,16 @@ class AS4Converter {
             return;
         }
         
+        // Check for required technology packages and show warning dialog
+        const requiredPackages = this.getRequiredTechnologyPackages();
+        
+        if (requiredPackages.size > 0) {
+            const dialogResult = await this.showTechnologyPackageDialog(requiredPackages);
+            if (!dialogResult.continue) {
+                return; // User cancelled
+            }
+        }
+        
         // Show progress dialog
         const progressDialog = document.getElementById('downloadProgressDialog');
         const progressBar = document.getElementById('progressBar');
@@ -2864,41 +3388,41 @@ class AS4Converter {
         // Create project folder in ZIP
         const projectFolder = zip.folder(projectName + '_AS6');
         
-        // Get list of technology package libraries that should have binaries excluded
-        // These include libraries with techPackage property AND Library_2 sources with specific AS6 versions
+        // Get list of technology package libraries whose files will be replaced with AS6 versions
+        // We'll skip ALL files from these libraries and fetch fresh AS6 versions instead
         const techPackageLibraries = new Set();
         Object.entries(DeprecationDatabase.as6Format.libraryMapping).forEach(([libName, mapping]) => {
-            if (mapping.techPackage || mapping.as6LibVersion) {
+            if (mapping.techPackage || mapping.source === 'Library_2') {
                 techPackageLibraries.add(libName.toLowerCase());
             }
         });
         
-        // Binary file extensions to exclude from technology package libraries
-        const binaryExtensions = ['.br', '.a', '.o'];
-        
         // Add all project files with their directory structure
-        // Library versions have been updated in-place during analysis
-        // Exclude binary files from technology package libraries (they'll be provided by AS6)
+        // Skip files from technology package libraries - they'll be replaced with AS6 versions
         let fileCount = 0;
-        let skippedBinaries = 0;
+        let skippedLibraryFiles = 0;
         const totalFiles = this.projectFiles.size;
         this.projectFiles.forEach((file, path) => {
-            // Check if this is a binary file in a technology package library
+            // Check if this file is inside a technology package library folder
             const pathParts = path.toLowerCase().split(/[/\\]/);
             const libIndex = pathParts.indexOf('libraries');
-            let isTechPackageBinary = false;
+            let isTechPackageLibrary = false;
             
             if (libIndex >= 0 && libIndex < pathParts.length - 1) {
                 const libName = pathParts[libIndex + 1];
-                const ext = this.getFileExtension(file.name);
-                if (techPackageLibraries.has(libName) && binaryExtensions.includes(ext.toLowerCase())) {
-                    isTechPackageBinary = true;
-                    skippedBinaries++;
+                if (techPackageLibraries.has(libName)) {
+                    isTechPackageLibrary = true;
+                    skippedLibraryFiles++;
                 }
             }
             
-            if (!isTechPackageBinary) {
-                projectFolder.file(path, file.content);
+            if (!isTechPackageLibrary) {
+                // For binary files, pass the ArrayBuffer with binary option
+                if (file.isBinary) {
+                    projectFolder.file(path, file.content, { binary: true });
+                } else {
+                    projectFolder.file(path, file.content);
+                }
             }
             fileCount++;
             // Update progress to 50% during file addition
@@ -2907,8 +3431,8 @@ class AS4Converter {
             progressPercent.textContent = percent + '%';
         });
         
-        if (skippedBinaries > 0) {
-            console.log(`Skipped ${skippedBinaries} binary files from technology package libraries`);
+        if (skippedLibraryFiles > 0) {
+            console.log(`Skipped ${skippedLibraryFiles} files from technology package libraries (will be replaced with AS6 versions)`);
         }
         
         // Add AS6 structural changes info
@@ -2922,15 +3446,15 @@ class AS4Converter {
             sourceVersion: 'AS4.x',
             targetVersion: 'AS6.x',
             structuralChanges: structuralChanges,
-            libraryUpdates: 'Technology package library versions have been updated to AS6 versions.',
-            binaryFilesExcluded: skippedBinaries,
+            libraryUpdates: 'Technology package libraries have been replaced with AS6 versions.',
+            libraryFilesReplaced: skippedLibraryFiles,
+            as6LibrariesIncluded: requiredPackages.size > 0,
             notes: [
                 'This project has been converted from AS4 to AS6 format.',
                 'Review all changes before importing into Automation Studio 6.',
                 'Library .lby files have been updated with AS6-compatible version numbers.',
-                'Binary files (.br, .a) from technology package libraries have been EXCLUDED.',
-                'Automation Studio 6 will automatically link the correct binaries from installed technology packages.',
-                'Ensure the required technology packages are installed in Automation Studio 6 BEFORE opening this project.'
+                'AS6 library files have been included from bundled Technology Packages.',
+                'The project should be ready to open in Automation Studio 6.'
             ]
         }, null, 2));
         
@@ -2941,6 +3465,42 @@ class AS4Converter {
         // Add conversion summary as text
         const summary = this.generateConversionSummary();
         projectFolder.file('_conversion-summary.txt', summary);
+        
+        // Fetch and add AS6 library files from bundled LibrariesForAS6 folder
+        if (requiredPackages.size > 0) {
+            progressMessage.textContent = 'Fetching AS6 library files...';
+            progressBar.style.width = '56%';
+            progressPercent.textContent = '56%';
+            
+            const as6LibraryFiles = await this.fetchAS6LibraryFiles(requiredPackages, (fetched, total) => {
+                const pct = 56 + Math.floor((fetched / total) * 4);
+                progressBar.style.width = pct + '%';
+                progressPercent.textContent = pct + '%';
+            });
+            
+            // Add AS6 library files to the ZIP (in Logical/Libraries folder)
+            // Need to determine the project folder prefix from existing files
+            let projectFolderPrefix = '';
+            for (const [path] of this.projectFiles) {
+                const logicalIndex = path.toLowerCase().indexOf('logical');
+                if (logicalIndex > 0) {
+                    projectFolderPrefix = path.substring(0, logicalIndex);
+                    break;
+                }
+            }
+            
+            let addedLibFiles = 0;
+            for (const [relativePath, fileData] of as6LibraryFiles) {
+                const zipPath = `${projectFolderPrefix}Logical/${relativePath}`;
+                if (fileData.isBinary) {
+                    projectFolder.file(zipPath, fileData.content, { binary: true });
+                } else {
+                    projectFolder.file(zipPath, fileData.content);
+                }
+                addedLibFiles++;
+            }
+            console.log(`Added ${addedLibFiles} AS6 library files to ZIP (prefix: ${projectFolderPrefix})`);
+        }
         
         // Generate ZIP file
         try {
