@@ -842,6 +842,9 @@ class AS4Converter {
             // Auto-apply function replacements (memset→brsmemset, etc.)
             this.autoApplyFunctionReplacements();
             
+            // Auto-apply OPC UA mapping file conversion (FileVersion 7 → 9)
+            this.autoApplyUadFileConversion();
+            
             // Update UI
             this.displayAnalysisResults();
             this.switchTab('analysis');
@@ -1886,6 +1889,129 @@ class AS4Converter {
         });
         
         console.log('Function replacements completed');
+    }
+
+    /**
+     * Convert OPC UA mapping files (.uad) from FileVersion 7 to FileVersion 9
+     * Changes:
+     * - FileVersion="7" -> FileVersion="9"
+     * - Remove RoleId attribute from ACE elements (keep RoleName)
+     * - AutomaticEnable="True" -> RecursiveEnable="1"
+     * - EnableArrayElements="True" -> RecursiveEnable="1"
+     */
+    autoApplyUadFileConversion() {
+        console.log('Converting OPC UA mapping files (.uad) to AS6 format...');
+        
+        let filesConverted = 0;
+        
+        this.projectFiles.forEach((file, path) => {
+            if (!path.toLowerCase().endsWith('.uad')) return;
+            if (typeof file.content !== 'string') return;
+            
+            let content = file.content;
+            let modified = false;
+            
+            // Check if this is a FileVersion 7 file that needs conversion
+            if (!content.includes('FileVersion="7"') && !content.includes("FileVersion='7'")) {
+                return; // Not a version 7 file, skip
+            }
+            
+            // 1. Update FileVersion from 7 to 9
+            const newContent = content
+                // Update FileVersion
+                .replace(/FileVersion="7"/g, 'FileVersion="9"')
+                .replace(/FileVersion='7'/g, "FileVersion='9'")
+                // Remove RoleId attribute from ACE elements (keep other attributes)
+                .replace(/(<ACE\s+)RoleId=["'][^"']*["']\s+(RoleName=)/g, '$1$2')
+                .replace(/(<ACE\s+RoleName=["'][^"']*["']\s+)RoleId=["'][^"']*["']\s*/g, '$1')
+                // Replace AutomaticEnable="True" with RecursiveEnable="1"
+                .replace(/AutomaticEnable=["']True["']/gi, 'RecursiveEnable="1"')
+                // Replace EnableArrayElements="True" with RecursiveEnable="1"
+                .replace(/EnableArrayElements=["']True["']/gi, 'RecursiveEnable="1"');
+            
+            if (newContent !== content) {
+                file.content = newContent;
+                filesConverted++;
+                console.log(`Converted UAD file: ${path}`);
+                
+                // Add to analysis results
+                this.analysisResults.push({
+                    severity: 'info',
+                    category: 'opcua',
+                    name: 'OPC UA Mapping File Updated',
+                    description: 'UAD file converted from FileVersion 7 to FileVersion 9 format',
+                    file: path,
+                    autoFixed: true,
+                    details: [
+                        'FileVersion updated to 9',
+                        'RoleId attributes removed from ACE elements',
+                        'AutomaticEnable replaced with RecursiveEnable',
+                        'EnableArrayElements replaced with RecursiveEnable'
+                    ]
+                });
+            }
+        });
+        
+        console.log(`UAD file conversion completed: ${filesConverted} files converted`);
+    }
+
+    /**
+     * Replace acp10sys.br files in Physical/Motion folders with AS6 version
+     * This file is part of the Acp10man library but also exists in Physical folders
+     * and must be replaced with the AS6 version to avoid build errors
+     */
+    async replaceAcp10sysBrFiles() {
+        const acp10sysFiles = [];
+        
+        // Find all acp10sys.br files in Physical folders (Motion subfolder)
+        this.projectFiles.forEach((file, path) => {
+            const pathLower = path.toLowerCase();
+            if (pathLower.endsWith('acp10sys.br') && 
+                (pathLower.includes('/physical/') || pathLower.includes('\\physical\\'))) {
+                acp10sysFiles.push(path);
+            }
+        });
+        
+        if (acp10sysFiles.length === 0) {
+            return; // No acp10sys.br files to replace
+        }
+        
+        console.log(`Found ${acp10sysFiles.length} acp10sys.br files in Physical folders to replace`);
+        
+        // Fetch the AS6 version from Acp10Arnc0 technology package
+        const as6FilePath = 'LibrariesForAS6/TechnologyPackages/Acp10Arnc0/6.2.0/Library/Acp10man/V6.02.0/SG4/Powerlink/acp10sys.br';
+        
+        try {
+            const response = await fetch(as6FilePath);
+            if (!response.ok) {
+                console.warn(`Could not fetch AS6 acp10sys.br: ${response.status}`);
+                return;
+            }
+            
+            const as6Content = await response.arrayBuffer();
+            
+            // Replace each acp10sys.br file with the AS6 version
+            for (const path of acp10sysFiles) {
+                this.projectFiles.set(path, {
+                    content: as6Content,
+                    isBinary: true,
+                    type: 'binary'
+                });
+                console.log(`Replaced acp10sys.br with AS6 version: ${path}`);
+                
+                // Add to analysis results
+                this.analysisResults.push({
+                    severity: 'info',
+                    category: 'motion',
+                    name: 'Motion System File Updated',
+                    description: 'acp10sys.br replaced with AS6 version from Acp10Arnc0 6.2.0',
+                    file: path,
+                    autoFixed: true
+                });
+            }
+        } catch (error) {
+            console.error('Failed to fetch AS6 acp10sys.br:', error);
+        }
     }
 
     getRequiredTechnologyPackages() {
@@ -3059,14 +3185,29 @@ class AS4Converter {
     }
 
     applyAllConversions() {
-        this.selectedFindings.forEach(id => {
-            if (!this.appliedConversions.has(id)) {
-                this.applyConversion(id);
-            }
-        });
+        console.log('applyAllConversions called, selectedFindings:', this.selectedFindings.size);
         
-        // Generate report
-        this.generateReport();
+        try {
+            this.selectedFindings.forEach(id => {
+                if (!this.appliedConversions.has(id)) {
+                    this.applyConversion(id);
+                }
+            });
+            
+            console.log('All conversions applied, generating report...');
+            
+            // Generate report
+            this.generateReport();
+            
+            console.log('Report generated, switching to report tab...');
+            
+            // Switch to report tab
+            this.switchTab('report');
+            
+        } catch (error) {
+            console.error('Error in applyAllConversions:', error);
+            alert('Error applying conversions: ' + error.message);
+        }
     }
 
     undoAllConversions() {
@@ -3164,12 +3305,14 @@ class AS4Converter {
             <div class="changes-list">
                 ${appliedChanges.map(f => {
                     const conv = this.generateConversion(f);
+                    const beforeText = (conv && conv.before) ? conv.before.substring(0, 100) : '(no preview)';
+                    const afterText = (conv && conv.after) ? conv.after.substring(0, 100) : '(no preview)';
                     return `
                         <div class="change-item">
-                            <h5>${f.name} (${f.file})</h5>
+                            <h5>${f.name} (${f.file || 'auto-applied'})</h5>
                             <div class="code-diff">
-                                <div class="diff-before"><span class="diff-label">-</span> ${this.escapeHtml(conv.before.substring(0, 100))}...</div>
-                                <div class="diff-after"><span class="diff-label">+</span> ${this.escapeHtml(conv.after.substring(0, 100))}...</div>
+                                <div class="diff-before"><span class="diff-label">-</span> ${this.escapeHtml(beforeText)}...</div>
+                                <div class="diff-after"><span class="diff-label">+</span> ${this.escapeHtml(afterText)}...</div>
                             </div>
                         </div>
                     `;
@@ -3371,6 +3514,9 @@ class AS4Converter {
             }
         }
         
+        // Replace acp10sys.br files in Physical folders with AS6 version
+        await this.replaceAcp10sysBrFiles();
+        
         // Show progress dialog
         const progressDialog = document.getElementById('downloadProgressDialog');
         const progressBar = document.getElementById('progressBar');
@@ -3472,11 +3618,22 @@ class AS4Converter {
             progressBar.style.width = '56%';
             progressPercent.textContent = '56%';
             
+            console.log('=== Starting AS6 library fetch ===');
+            console.log('Required packages:', requiredPackages.size);
+            requiredPackages.forEach((pkg, name) => {
+                console.log(`  Package: ${name}, libraries: ${pkg.libraries.size}`);
+                pkg.libraries.forEach((lib, libName) => {
+                    console.log(`    - ${libName}: version=${lib.version}`);
+                });
+            });
+            
             const as6LibraryFiles = await this.fetchAS6LibraryFiles(requiredPackages, (fetched, total) => {
                 const pct = 56 + Math.floor((fetched / total) * 4);
                 progressBar.style.width = pct + '%';
                 progressPercent.textContent = pct + '%';
             });
+            
+            console.log(`=== Fetched ${as6LibraryFiles.size} AS6 library files ===`);
             
             // Add AS6 library files to the ZIP (in Logical/Libraries folder)
             // Need to determine the project folder prefix from existing files
@@ -3489,9 +3646,14 @@ class AS4Converter {
                 }
             }
             
+            console.log(`Project folder prefix: "${projectFolderPrefix}"`);
+            
             let addedLibFiles = 0;
             for (const [relativePath, fileData] of as6LibraryFiles) {
                 const zipPath = `${projectFolderPrefix}Logical/${relativePath}`;
+                if (addedLibFiles < 5) {
+                    console.log(`  Adding: ${zipPath} (binary: ${fileData.isBinary})`);
+                }
                 if (fileData.isBinary) {
                     projectFolder.file(zipPath, fileData.content, { binary: true });
                 } else {
@@ -3500,6 +3662,8 @@ class AS4Converter {
                 addedLibFiles++;
             }
             console.log(`Added ${addedLibFiles} AS6 library files to ZIP (prefix: ${projectFolderPrefix})`);
+        } else {
+            console.log('=== No required packages, skipping AS6 library fetch ===');
         }
         
         // Generate ZIP file

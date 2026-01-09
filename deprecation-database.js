@@ -425,35 +425,65 @@ const DeprecationDatabase = {
             notes: 'Use UA_Write from OpcUa library.',
             autoReplace: true
         },
-        // Legacy string functions
+        // Legacy string functions - AS6 renamed these to add extra 's'
         {
-            name: 'brsstrcat',
-            pattern: /\bbrsstrcat\b/g,
-            replacement: 'brstrcat',
+            name: 'brstrcat',
+            pattern: /\bbrstrcat\b/g,
+            replacement: 'brsstrcat',
             severity: 'info',
             category: 'string',
-            description: 'Legacy string concatenation function',
-            notes: 'Use AsBrStr library brstrcat function.',
+            description: 'String concatenation function renamed in AS6',
+            notes: 'AsBrStr library renamed brstrcat to brsstrcat in AS6.',
             autoReplace: true
         },
         {
-            name: 'brsstrcpy',
-            pattern: /\bbrsstrcpy\b/g,
-            replacement: 'brstrcpy',
+            name: 'brstrcpy',
+            pattern: /\bbrstrcpy\b/g,
+            replacement: 'brsstrcpy',
             severity: 'info',
             category: 'string',
-            description: 'Legacy string copy function',
-            notes: 'Use AsBrStr library brstrcpy function.',
+            description: 'String copy function renamed in AS6',
+            notes: 'AsBrStr library renamed brstrcpy to brsstrcpy in AS6.',
             autoReplace: true
         },
         {
-            name: 'brssprintf',
-            pattern: /\bbrssprintf\b/g,
-            replacement: 'brsprintf',
+            name: 'brsprintf',
+            pattern: /\bbrsprintf\b/g,
+            replacement: 'brssprintf',
             severity: 'info',
             category: 'string',
-            description: 'Legacy string format function',
-            notes: 'Use AsBrStr library brsprintf function.',
+            description: 'String format function renamed in AS6',
+            notes: 'AsBrStr library renamed brsprintf to brssprintf in AS6.',
+            autoReplace: true
+        },
+        {
+            name: 'brstrlen',
+            pattern: /\bbrstrlen\b/g,
+            replacement: 'brsstrlen',
+            severity: 'info',
+            category: 'string',
+            description: 'String length function renamed in AS6',
+            notes: 'AsBrStr library renamed brstrlen to brsstrlen in AS6.',
+            autoReplace: true
+        },
+        {
+            name: 'brstrcmp',
+            pattern: /\bbrstrcmp\b/g,
+            replacement: 'brsstrcmp',
+            severity: 'info',
+            category: 'string',
+            description: 'String compare function renamed in AS6',
+            notes: 'AsBrStr library renamed brstrcmp to brsstrcmp in AS6.',
+            autoReplace: true
+        },
+        {
+            name: 'brstrncpy',
+            pattern: /\bbrstrncpy\b/g,
+            replacement: 'brssstrncpy',
+            severity: 'info',
+            category: 'string',
+            description: 'String n-copy function renamed in AS6',
+            notes: 'AsBrStr library renamed brstrncpy to brssstrncpy in AS6.',
             autoReplace: true
         }
     ],
