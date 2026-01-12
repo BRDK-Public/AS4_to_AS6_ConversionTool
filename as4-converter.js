@@ -336,6 +336,7 @@ class AS4Converter {
             '.uaserver', '.uad',
             // mapp components
             '.mpalarmxcore', '.mpalarmxhistory', '.mprecipexml', '.mprecipecsv', '.mpdatarecorder',
+            '.mpalarmxlist', '.mpalarmxcategory', '.mpalarmxquery',
             // Security and access
             '.role', '.user', '.firewallrules',
             // DTM / Device configuration
@@ -454,6 +455,7 @@ class AS4Converter {
                 '.uaserver', '.uad',
                 // mapp components
                 '.mpalarmxcore', '.mpalarmxhistory', '.mprecipexml', '.mprecipecsv', '.mpdatarecorder',
+                '.mpalarmxlist', '.mpalarmxcategory', '.mpalarmxquery',
                 // Security and access
                 '.role', '.user', '.firewallrules',
                 // DTM / Device configuration
@@ -641,6 +643,9 @@ class AS4Converter {
             // mapp components
             '.mpalarmxcore': 'mapp_component',
             '.mpalarmxhistory': 'mapp_component',
+            '.mpalarmxlist': 'mapp_component',
+            '.mpalarmxcategory': 'mapp_component',
+            '.mpalarmxquery': 'mapp_component',
             '.mprecipexml': 'mapp_component',
             '.mprecipecsv': 'mapp_component',
             '.mpdatarecorder': 'mapp_component',
@@ -844,6 +849,9 @@ class AS4Converter {
             
             // Auto-apply OPC UA conversion (OpcUA → OpcUaCs, FileVersion 10, config files)
             this.autoApplyUadFileConversion();
+            
+            // Auto-apply mappServices AlarmX conversion (split core file to AS6 format)
+            this.autoApplyMappServicesConversion();
             
             // Update UI
             this.displayAnalysisResults();
@@ -2192,6 +2200,396 @@ class AS4Converter {
       </Group>
     </Group>
   </Element>
+</Configuration>`;
+    }
+
+    /**
+     * Convert mappServices AlarmX configuration files from AS4 to AS6 format.
+     * 
+     * AS4 format: Single .mpalarmxcore file with:
+     * - mapp.AlarmX.Core.BySeverity - severity-based reaction groups
+     * - mapp.AlarmX.Core.Configuration - alarm definitions
+     * - mapp.AlarmX.Core.Snippets - snippets
+     * 
+     * AS6 format: Multiple files:
+     * - {name}_1.mpalarmxcore - Mapping (flattened reactions) + List/Category references
+     * - {name}_L.mpalarmxlist - Alarm definitions + Snippets (renamed group)
+     * - {name}_C.mpalarmxcategory - Empty category file
+     * - {name}_Q.mpalarmxquery - Empty query file
+     * - {name}_2.mpalarmxhistory - History file (renamed from {name}H.mpalarmxhistory)
+     * - {name}H_.mpalarmxquery - History query file
+     */
+    autoApplyMappServicesConversion() {
+        console.log('Converting mappServices AlarmX configuration to AS6 format...');
+        
+        // Find all .mpalarmxcore files in mappServices folders
+        const alarmXCoreFiles = new Map(); // path -> file
+        
+        this.projectFiles.forEach((file, path) => {
+            if (path.toLowerCase().endsWith('.mpalarmxcore') && 
+                typeof file.content === 'string' &&
+                file.content.includes('mapp.AlarmX.Core') &&
+                (path.toLowerCase().includes('/mappservices/') || 
+                 path.toLowerCase().includes('\\mappservices\\'))) {
+                alarmXCoreFiles.set(path, file);
+            }
+        });
+        
+        if (alarmXCoreFiles.size === 0) {
+            console.log('No mappServices AlarmX core files found to convert');
+            return;
+        }
+        
+        console.log(`Found ${alarmXCoreFiles.size} AlarmX core file(s) to convert`);
+        
+        alarmXCoreFiles.forEach((file, path) => {
+            this.convertMpAlarmXCore(path, file);
+        });
+        
+        console.log('mappServices AlarmX conversion completed');
+    }
+    
+    /**
+     * Convert a single .mpalarmxcore file to AS6 format
+     */
+    convertMpAlarmXCore(originalPath, file) {
+        const content = file.content;
+        const pathParts = originalPath.split(/[\/\\]/);
+        const fileName = pathParts.pop();
+        const folderPath = pathParts.join('/') + '/';
+        const baseName = fileName.replace(/\.mpalarmxcore$/i, '');
+        
+        console.log(`Converting AlarmX core file: ${originalPath}`);
+        
+        const changes = [];
+        
+        // Parse the AS4 content
+        const bySeverityMatch = content.match(/<Group ID="mapp\.AlarmX\.Core">\s*<Group ID="BySeverity">([\s\S]*?)<\/Group>\s*<\/Group>/);
+        const configurationMatch = content.match(/<Group ID="mapp\.AlarmX\.Core\.Configuration">([\s\S]*?)<\/Group>\s*(?=<Group ID="mapp\.AlarmX\.Core\.Snippets">|<\/Element>)/);
+        const snippetsMatch = content.match(/<Group ID="mapp\.AlarmX\.Core\.Snippets">([\s\S]*?)<\/Group>\s*<\/Element>/);
+        
+        if (!bySeverityMatch) {
+            console.log(`  Skipping ${fileName} - no BySeverity section found (may already be AS6 format)`);
+            return;
+        }
+        
+        // Extract Element ID (e.g., "mpAlarmXCore")
+        const elementIdMatch = content.match(/<Element ID="([^"]+)" Type="mpalarmxcore">/);
+        const elementId = elementIdMatch ? elementIdMatch[1] : 'mpAlarmXCore';
+        
+        // Parse BySeverity section and convert to Mapping format
+        const mappingEntries = this.convertBySeverityToMapping(bySeverityMatch[1]);
+        
+        // Create the new core file content (_1.mpalarmxcore)
+        const newCoreContent = this.generateAS6CoreFile(elementId, mappingEntries);
+        
+        // Create the list file content (_L.mpalarmxlist)
+        const configurationContent = configurationMatch ? configurationMatch[1] : '';
+        const snippetsContent = snippetsMatch ? snippetsMatch[1] : '';
+        const newListContent = this.generateAS6ListFile(elementId, configurationContent, snippetsContent);
+        
+        // Create the category file content (_C.mpalarmxcategory)
+        const newCategoryContent = this.generateAS6CategoryFile(elementId);
+        
+        // Create the query file content (_Q.mpalarmxquery)
+        const newQueryContent = this.generateAS6QueryFile(elementId);
+        
+        // Delete the original file
+        this.projectFiles.delete(originalPath);
+        changes.push(`Removed original file: ${fileName}`);
+        
+        // Add new files
+        const newCorePath = folderPath + baseName + '_1.mpalarmxcore';
+        this.projectFiles.set(newCorePath, {
+            content: newCoreContent,
+            type: 'mapp_component',
+            name: baseName + '_1.mpalarmxcore',
+            extension: '.mpalarmxcore',
+            isBinary: false
+        });
+        changes.push(`Created ${baseName}_1.mpalarmxcore with Mapping format`);
+        
+        const newListPath = folderPath + baseName + '_L.mpalarmxlist';
+        this.projectFiles.set(newListPath, {
+            content: newListContent,
+            type: 'mapp_component',
+            name: baseName + '_L.mpalarmxlist',
+            extension: '.mpalarmxlist',
+            isBinary: false
+        });
+        changes.push(`Created ${baseName}_L.mpalarmxlist with alarm definitions`);
+        
+        const newCategoryPath = folderPath + baseName + '_C.mpalarmxcategory';
+        this.projectFiles.set(newCategoryPath, {
+            content: newCategoryContent,
+            type: 'mapp_component',
+            name: baseName + '_C.mpalarmxcategory',
+            extension: '.mpalarmxcategory',
+            isBinary: false
+        });
+        changes.push(`Created ${baseName}_C.mpalarmxcategory`);
+        
+        const newQueryPath = folderPath + baseName + '_Q.mpalarmxquery';
+        this.projectFiles.set(newQueryPath, {
+            content: newQueryContent,
+            type: 'mapp_component',
+            name: baseName + '_Q.mpalarmxquery',
+            extension: '.mpalarmxquery',
+            isBinary: false
+        });
+        changes.push(`Created ${baseName}_Q.mpalarmxquery`);
+        
+        // Handle history file renaming (e.g., CfgAlarmH.mpalarmxhistory -> CfgAlarm_2.mpalarmxhistory)
+        // Look for a history file that matches the pattern {baseName}H.mpalarmxhistory
+        const historyFilePattern = new RegExp(`${baseName}H\\.mpalarmxhistory$`, 'i');
+        let historyConverted = false;
+        
+        this.projectFiles.forEach((hFile, hPath) => {
+            if (historyFilePattern.test(hPath) && hPath.toLowerCase().startsWith(folderPath.toLowerCase())) {
+                // Rename the history file
+                const newHistoryPath = folderPath + baseName + '_2.mpalarmxhistory';
+                
+                // Update history file content to AS6 format
+                let historyContent = hFile.content;
+                if (typeof historyContent === 'string') {
+                    // Add the mapp.Gen group if not present
+                    if (!historyContent.includes('mapp.Gen')) {
+                        historyContent = historyContent.replace(
+                            /(<Element ID="[^"]+" Type="mpalarmxhistory")(\s*\/>|\s*>)/,
+                            '$1>\n    <Group ID="mapp.Gen">\n      <Property ID="Audit" Value="FALSE" />\n    </Group>\n  </Element'
+                        );
+                        // Fix self-closing element
+                        historyContent = historyContent.replace(/<\/Element\s*\/>/, '</Element>');
+                    }
+                }
+                
+                this.projectFiles.delete(hPath);
+                this.projectFiles.set(newHistoryPath, {
+                    content: historyContent,
+                    type: 'mapp_component',
+                    name: baseName + '_2.mpalarmxhistory',
+                    extension: '.mpalarmxhistory',
+                    isBinary: false
+                });
+                changes.push(`Renamed ${baseName}H.mpalarmxhistory to ${baseName}_2.mpalarmxhistory`);
+                
+                // Create the history query file
+                const historyQueryPath = folderPath + baseName + 'H_.mpalarmxquery';
+                this.projectFiles.set(historyQueryPath, {
+                    content: this.generateAS6HistoryQueryFile(),
+                    type: 'mapp_component',
+                    name: baseName + 'H_.mpalarmxquery',
+                    extension: '.mpalarmxquery',
+                    isBinary: false
+                });
+                changes.push(`Created ${baseName}H_.mpalarmxquery`);
+                
+                historyConverted = true;
+            }
+        });
+        
+        // Update Package.pkg in the same folder
+        const pkgPath = folderPath + 'Package.pkg';
+        const pkgFile = this.projectFiles.get(pkgPath);
+        if (pkgFile && typeof pkgFile.content === 'string') {
+            let pkgContent = pkgFile.content;
+            
+            // Remove old entries
+            pkgContent = pkgContent.replace(new RegExp(`<Object Type="File">${baseName}\\.mpalarmxcore</Object>\\s*`, 'gi'), '');
+            if (historyConverted) {
+                pkgContent = pkgContent.replace(new RegExp(`<Object Type="File">${baseName}H\\.mpalarmxhistory</Object>\\s*`, 'gi'), '');
+            }
+            
+            // Add new entries before </Objects>
+            const newEntries = [
+                `    <Object Type="File">${baseName}_1.mpalarmxcore</Object>`,
+                `    <Object Type="File">${baseName}_C.mpalarmxcategory</Object>`,
+                `    <Object Type="File">${baseName}_L.mpalarmxlist</Object>`,
+                `    <Object Type="File">${baseName}_Q.mpalarmxquery</Object>`
+            ];
+            
+            if (historyConverted) {
+                newEntries.push(`    <Object Type="File">${baseName}_2.mpalarmxhistory</Object>`);
+                newEntries.push(`    <Object Type="File">${baseName}H_.mpalarmxquery</Object>`);
+            }
+            
+            pkgContent = pkgContent.replace(
+                /<\/Objects>/,
+                newEntries.join('\n') + '\n  </Objects>'
+            );
+            
+            pkgFile.content = pkgContent;
+            changes.push('Updated Package.pkg with new file entries');
+        }
+        
+        // Add to analysis results
+        this.analysisResults.push({
+            severity: 'info',
+            category: 'mappservices',
+            name: 'AlarmX Core Converted to AS6 Format',
+            description: `AlarmX core file split into multiple AS6 format files`,
+            file: folderPath,
+            autoFixed: true,
+            details: changes
+        });
+    }
+    
+    /**
+     * Convert BySeverity XML content to flat Mapping entries
+     */
+    convertBySeverityToMapping(bySeverityContent) {
+        const mappingEntries = [];
+        let entryIndex = 0;
+        
+        // Parse each severity group
+        const groupRegex = /<Group ID="\[\d+\]">([\s\S]*?)<\/Group>/g;
+        let groupMatch;
+        
+        while ((groupMatch = groupRegex.exec(bySeverityContent)) !== null) {
+            const groupContent = groupMatch[1];
+            
+            // Extract severity value
+            const severityMatch = groupContent.match(/<Property ID="Severity" Value="(\d+)"/);
+            if (!severityMatch) {
+                // Empty group - create a None entry
+                mappingEntries.push({
+                    index: entryIndex++,
+                    alarm: '[]',
+                    action: 'None',
+                    reactionName: null
+                });
+                continue;
+            }
+            
+            const severity = severityMatch[1];
+            
+            // Extract all reactions (Selectors with Value="Reaction")
+            const selectorRegex = /<Selector ID="\[\d+\]"([^>]*?)(?:\/>|>([\s\S]*?)<\/Selector>)/g;
+            let selectorMatch;
+            
+            while ((selectorMatch = selectorRegex.exec(groupContent)) !== null) {
+                const selectorAttrs = selectorMatch[1];
+                const selectorContent = selectorMatch[2] || '';
+                
+                // Check if this is a Reaction selector or empty
+                if (selectorAttrs.includes('Value="Reaction"')) {
+                    // Extract the reaction name
+                    const nameMatch = selectorContent.match(/<Property ID="Name" Value="([^"]+)"/);
+                    if (nameMatch) {
+                        mappingEntries.push({
+                            index: entryIndex++,
+                            alarm: `[${severity}]`,
+                            action: 'Reaction',
+                            reactionName: nameMatch[1]
+                        });
+                    }
+                } else if (selectorMatch[0].endsWith('/>') || selectorContent.trim() === '') {
+                    // Empty selector - create a None entry for this severity
+                    mappingEntries.push({
+                        index: entryIndex++,
+                        alarm: `[${severity}]`,
+                        action: 'None',
+                        reactionName: null
+                    });
+                }
+            }
+        }
+        
+        return mappingEntries;
+    }
+    
+    /**
+     * Generate AS6 core file content
+     */
+    generateAS6CoreFile(elementId, mappingEntries) {
+        let mappingGroups = mappingEntries.map(entry => {
+            if (entry.action === 'None') {
+                return `        <Group ID="[${entry.index}]">
+          <Property ID="Alarm" Value="${entry.alarm}" />
+          <Selector ID="Action" Value="None" />
+        </Group>`;
+            } else {
+                return `        <Group ID="[${entry.index}]">
+          <Property ID="Alarm" Value="${entry.alarm}" />
+          <Selector ID="Action" Value="Reaction">
+            <Property ID="Name" Value="${entry.reactionName}" />
+          </Selector>
+        </Group>`;
+            }
+        }).join('\n');
+        
+        return `<?xml version="1.0" encoding="utf-8"?>
+<?AutomationStudio FileVersion="4.9"?>
+<Configuration>
+  <Element ID="${elementId}" Type="mpalarmxcore">
+    <Group ID="mapp.AlarmX.Core">
+      <Group ID="Mapping">
+${mappingGroups}
+      </Group>
+    </Group>
+    <Group ID="mapp.AlarmX.List">
+      <Group ID="[0]">
+        <Property ID="List" Value="${elementId}_List" />
+      </Group>
+    </Group>
+    <Group ID="mapp.AlarmX.Core.Categories">
+      <Group ID="[0]">
+        <Property ID="List" Value="${elementId}_Category" />
+      </Group>
+    </Group>
+  </Element>
+</Configuration>`;
+    }
+    
+    /**
+     * Generate AS6 list file content with alarm definitions and snippets
+     */
+    generateAS6ListFile(elementId, configurationContent, snippetsContent) {
+        // Rename snippets group from mapp.AlarmX.Core.Snippets to mapp.AlarmX.Snippets
+        let snippetsSection = '';
+        if (snippetsContent && snippetsContent.trim()) {
+            snippetsSection = `\n    <Group ID="mapp.AlarmX.Snippets">${snippetsContent}</Group>`;
+        }
+        
+        return `<?xml version="1.0" encoding="utf-8"?>
+<?AutomationStudio FileVersion="4.9"?>
+<Configuration>
+  <Element ID="${elementId}_List" Type="mpalarmxlist">
+    <Group ID="mapp.AlarmX.Core.Configuration">${configurationContent}</Group>${snippetsSection}
+  </Element>
+</Configuration>`;
+    }
+    
+    /**
+     * Generate AS6 category file content (empty template)
+     */
+    generateAS6CategoryFile(elementId) {
+        return `<?xml version="1.0" encoding="utf-8"?>
+<?AutomationStudio FileVersion="4.9"?>
+<Configuration>
+  <Element ID="${elementId}_Category" Type="mpalarmxcategory" />
+</Configuration>`;
+    }
+    
+    /**
+     * Generate AS6 query file content (empty template)
+     */
+    generateAS6QueryFile(elementId) {
+        return `<?xml version="1.0" encoding="utf-8"?>
+<?AutomationStudio FileVersion="4.9"?>
+<Configuration>
+  <Element ID="${elementId}_Query" Type="mpalarmxquery" />
+</Configuration>`;
+    }
+    
+    /**
+     * Generate AS6 history query file content (empty template)
+     */
+    generateAS6HistoryQueryFile() {
+        return `<?xml version="1.0" encoding="utf-8"?>
+<?AutomationStudio FileVersion="4.9"?>
+<Configuration>
+  <Element ID="mpAlarmXHistory_Query" Type="mpalarmxquery" />
 </Configuration>`;
     }
 
