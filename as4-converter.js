@@ -2022,7 +2022,7 @@ class AS4Converter {
      * Convert UAD file content from FileVersion 7/9 to FileVersion 10
      */
     convertUadToVersion10(content) {
-        return content
+        let result = content
             // Update XML processing instruction FileVersion to 6.0
             .replace(/<\?AutomationStudio\s+FileVersion="[^"]*"\s*\?>/g, '<?AutomationStudio FileVersion="6.0"?>')
             // Update OpcUaSource FileVersion to 10
@@ -2037,6 +2037,13 @@ class AS4Converter {
             .replace(/AutomaticEnable=["']True["']/gi, 'RecursiveEnable="1"')
             // Replace EnableArrayElements="True" with RecursiveEnable="1"
             .replace(/EnableArrayElements=["']True["']/gi, 'RecursiveEnable="1"');
+        
+        // Remove <DefaultView> wrapper (AS6 uses direct <Module> elements instead)
+        // The DefaultView element was used in AS4 but is removed in AS6 FileVersion 10
+        result = result.replace(/<DefaultView[^>]*>\s*/g, '');
+        result = result.replace(/<\/DefaultView>\s*/g, '');
+        
+        return result;
     }
     
     /**
