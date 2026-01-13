@@ -853,6 +853,9 @@ class AS4Converter {
             // Auto-apply mappServices AlarmX conversion (split core file to AS6 format)
             this.autoApplyMappServicesConversion();
             
+            // Auto-apply mappView configuration updates (startup user to anonymous)
+            this.autoApplyMappViewConfigConversion();
+            
             // Update UI
             this.displayAnalysisResults();
             this.switchTab('analysis');
@@ -2096,7 +2099,7 @@ class AS4Converter {
           <Property ID="Basic256Sha256" Value="1" />
         </Group>
         <Group ID="UserIdentityTokens">
-          <Property ID="AnonymousIdentityToken" Value="0" />
+          <Property ID="AnonymousIdentityToken" Value="1" />
           <Property ID="UserNameIdentityToken" Value="1" />
           <Property ID="X509IdentityToken" Value="0" />
         </Group>
@@ -2659,6 +2662,52 @@ ${mappingGroups}
 <Configuration>
   <Element ID="mpAlarmXHistory_Query" Type="mpalarmxquery" />
 </Configuration>`;
+    }
+
+    /**
+     * Update mappView configuration files to use anonymous startup user
+     * This ensures HMI bindings can connect without requiring authentication
+     */
+    autoApplyMappViewConfigConversion() {
+        console.log('Updating mappView configuration files for anonymous startup user...');
+        
+        let updatedCount = 0;
+        
+        this.projectFiles.forEach((file, path) => {
+            // Match Config.mappviewcfg files
+            if (path.toLowerCase().endsWith('config.mappviewcfg') && 
+                typeof file.content === 'string') {
+                
+                // Check if the file has the AuthenticationMode setting
+                if (file.content.includes('AuthenticationMode')) {
+                    // Add StartupUser selector after AuthenticationMode
+                    const updatedContent = file.content.replace(
+                        /(<Selector ID="AuthenticationMode" Value="[^"]*" \/?>)/,
+                        '$1\n      <Selector ID="StartupUser" Value="StartupUserAnonymousToken" />'
+                    );
+                    
+                    if (updatedContent !== file.content) {
+                        file.content = updatedContent;
+                        updatedCount++;
+                        console.log(`Updated ${path} with anonymous startup user`);
+                        
+                        this.analysisResults.push({
+                            severity: 'info',
+                            category: 'mappview',
+                            name: 'MappView Config Updated',
+                            description: 'Configured anonymous startup user for HMI bindings',
+                            file: path,
+                            autoFixed: true,
+                            details: ['Added StartupUser = StartupUserAnonymousToken']
+                        });
+                    }
+                }
+            }
+        });
+        
+        if (updatedCount > 0) {
+            console.log(`MappView configuration updated for ${updatedCount} file(s)`);
+        }
     }
 
     /**
