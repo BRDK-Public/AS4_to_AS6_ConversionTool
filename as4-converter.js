@@ -2449,54 +2449,66 @@ class AS4Converter {
         const mappingEntries = [];
         let entryIndex = 0;
         
-        // Parse each severity group - handle both self-closing and content groups
-        // Self-closing: <Group ID="[1]" />
-        // With content: <Group ID="[0]">...</Group>
-        const groupRegex = /<Group ID="\[(\d+)\]"\s*(\/?>)/g;
-        let match;
-        
-        // Collect all groups with their content
+        // Split BySeverity content into individual group entries
+        // Match both self-closing groups: <Group ID="[1]" />
+        // And groups with content: <Group ID="[0]">...</Group>
         const groups = [];
-        while ((match = groupRegex.exec(bySeverityContent)) !== null) {
-            const groupId = match[1];
-            const isSelfClosing = match[2] === '/>';
+        
+        // Use a simple approach: find each <Group ID="[n]" and extract until matching </Group> or />
+        let searchPos = 0;
+        while (searchPos < bySeverityContent.length) {
+            const groupStart = bySeverityContent.indexOf('<Group ID="[', searchPos);
+            if (groupStart === -1) break;
             
-            if (isSelfClosing) {
-                groups.push({ id: groupId, content: '' });
+            // Find the end of the opening tag
+            const tagEnd = bySeverityContent.indexOf('>', groupStart);
+            if (tagEnd === -1) break;
+            
+            // Check if self-closing
+            if (bySeverityContent.charAt(tagEnd - 1) === '/') {
+                // Self-closing group
+                groups.push({ content: '' });
+                searchPos = tagEnd + 1;
             } else {
-                // Find the matching closing tag by counting nested Group tags
+                // Find matching </Group> by counting depth
                 let depth = 1;
-                let pos = match.index + match[0].length;
-                let contentStart = pos;
+                let pos = tagEnd + 1;
                 
                 while (depth > 0 && pos < bySeverityContent.length) {
-                    const remaining = bySeverityContent.substring(pos);
-                    const nextGroupOpen = remaining.search(/<Group\s/);
-                    const nextGroupClose = remaining.indexOf('</Group>');
+                    const nextOpen = bySeverityContent.indexOf('<Group', pos);
+                    const nextClose = bySeverityContent.indexOf('</Group>', pos);
                     
-                    if (nextGroupClose === -1) break;
+                    if (nextClose === -1) {
+                        // No more closing tags, break
+                        pos = bySeverityContent.length;
+                        break;
+                    }
                     
-                    if (nextGroupOpen !== -1 && nextGroupOpen < nextGroupClose) {
-                        // Check if the next Group tag is self-closing
-                        const groupTagEnd = remaining.indexOf('>', nextGroupOpen);
-                        if (groupTagEnd !== -1 && remaining.substring(nextGroupOpen, groupTagEnd + 1).includes('/>')) {
-                            // Self-closing nested group, don't change depth
-                            pos += groupTagEnd + 1;
+                    // Check if there's an opening tag before the closing tag
+                    if (nextOpen !== -1 && nextOpen < nextClose) {
+                        // Check if it's self-closing
+                        const openTagEnd = bySeverityContent.indexOf('>', nextOpen);
+                        if (openTagEnd !== -1 && bySeverityContent.charAt(openTagEnd - 1) === '/') {
+                            // Self-closing, skip it
+                            pos = openTagEnd + 1;
                         } else {
+                            // Regular opening tag, increase depth
                             depth++;
-                            pos += nextGroupOpen + 6;
+                            pos = openTagEnd + 1;
                         }
                     } else {
+                        // Closing tag comes first
                         depth--;
                         if (depth === 0) {
+                            // Found matching close, extract content
                             groups.push({ 
-                                id: groupId, 
-                                content: bySeverityContent.substring(contentStart, pos + nextGroupClose)
+                                content: bySeverityContent.substring(tagEnd + 1, nextClose)
                             });
                         }
-                        pos += nextGroupClose + 8;
+                        pos = nextClose + 8; // length of '</Group>'
                     }
                 }
+                searchPos = pos;
             }
         }
         
