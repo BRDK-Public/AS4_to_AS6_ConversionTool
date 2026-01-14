@@ -337,6 +337,7 @@ class AS4Converter {
             // mapp components
             '.mpalarmxcore', '.mpalarmxhistory', '.mprecipexml', '.mprecipecsv', '.mpdatarecorder',
             '.mpalarmxlist', '.mpalarmxcategory', '.mpalarmxquery',
+            '.mpcomgroup', '.mpfilemanagerui',
             // Security and access
             '.role', '.user', '.firewallrules',
             // DTM / Device configuration
@@ -456,6 +457,7 @@ class AS4Converter {
                 // mapp components
                 '.mpalarmxcore', '.mpalarmxhistory', '.mprecipexml', '.mprecipecsv', '.mpdatarecorder',
                 '.mpalarmxlist', '.mpalarmxcategory', '.mpalarmxquery',
+                '.mpcomgroup', '.mpfilemanagerui',
                 // Security and access
                 '.role', '.user', '.firewallrules',
                 // DTM / Device configuration
@@ -2288,7 +2290,10 @@ class AS4Converter {
      * - {name}H_.mpalarmxquery - History query file
      */
     autoApplyMappServicesConversion() {
-        console.log('Converting mappServices AlarmX configuration to AS6 format...');
+        console.log('Converting mappServices configuration to AS6 format...');
+        
+        // Convert MpComGroup files first (used by MpAlarmX)
+        this.autoApplyMpComGroupConversion();
         
         // Find all .mpalarmxcore files in mappServices folders
         const alarmXCoreFiles = new Map(); // path -> file
@@ -2319,6 +2324,10 @@ class AS4Converter {
     
     /**
      * Convert a single .mpalarmxcore file to AS6 format
+     * 
+     * This handles two scenarios:
+     * 1. Files with BySeverity section (older format) - convert to Mapping format
+     * 2. Files with multiple Element nodes (newer format) - split alarm definitions to List files
      */
     convertMpAlarmXCore(originalPath, file) {
         const content = file.content;
@@ -2331,13 +2340,352 @@ class AS4Converter {
         
         const changes = [];
         
+        // Check for BySeverity section (old format)
+        const hasBySeverity = content.includes('<Group ID="BySeverity">') || 
+                              content.includes('<Group ID="mapp.AlarmX.Core"><Group ID="BySeverity">');
+        
+        if (hasBySeverity) {
+            // Use the old conversion logic for BySeverity format
+            this.convertMpAlarmXCoreWithBySeverity(originalPath, file, baseName, folderPath, changes);
+            return;
+        }
+        
+        // New format: multiple Elements with mapp.AlarmX.Core.Configuration
+        // Extract all Element nodes
+        const elementPattern = /<Element ID="([^"]+)" Type="mpalarmxcore">([\s\S]*?)<\/Element>/g;
+        const elements = [];
+        let match;
+        
+        while ((match = elementPattern.exec(content)) !== null) {
+            elements.push({
+                id: match[1],
+                content: match[2]
+            });
+        }
+        
+        if (elements.length === 0) {
+            console.log(`  Skipping ${fileName} - no valid Element nodes found`);
+            return;
+        }
+        
+        console.log(`  Found ${elements.length} Element node(s): ${elements.map(e => e.id).join(', ')}`);
+        
+        // Look up parent groups from mpcomgroup files
+        const parentGroupMap = this.findMpComGroupParents();
+        
+        // Generate the core file with all Elements (references to lists and categories)
+        const coreElements = [];
+        const listElements = [];
+        const categoryElements = [];
+        const queryElements = [];
+        
+        for (const elem of elements) {
+            const elemId = elem.id;
+            const parentGroup = parentGroupMap.get(elemId);
+            
+            // Extract Configuration content (alarm definitions)
+            const configMatch = elem.content.match(/<Group ID="mapp\.AlarmX\.Core\.Configuration">([\s\S]*?)<\/Group>(?=\s*<Group ID="mapp\.AlarmX\.Core\.Snippets">|\s*$)/);
+            const snippetsMatch = elem.content.match(/<Group ID="mapp\.AlarmX\.Core\.Snippets">([\s\S]*?)<\/Group>\s*$/);
+            
+            // Create core Element with references
+            let coreElem = `  <Element ID="${elemId}" Type="mpalarmxcore">
+    <Group ID="mapp.AlarmX.List">
+      <Group ID="[0]">
+        <Property ID="List" Value="${elemId}_List" />
+      </Group>
+    </Group>
+    <Group ID="mapp.AlarmX.Core.Categories">
+      <Group ID="[0]">
+        <Property ID="List" Value="${elemId}_Category" />
+      </Group>
+    </Group>`;
+            
+            // Add Parent reference if found in mpcomgroup
+            if (parentGroup) {
+                coreElem += `
+    <Group ID="mapp.Gen">
+      <Property ID="Parent" Value="${parentGroup}" />
+    </Group>`;
+            }
+            
+            coreElem += `
+  </Element>`;
+            coreElements.push(coreElem);
+            
+            // Create list Element with alarm definitions and snippets
+            let listElem = `  <Element ID="${elemId}_List" Type="mpalarmxlist">`;
+            if (configMatch && configMatch[1].trim()) {
+                listElem += `
+    <Group ID="mapp.AlarmX.Core.Configuration">${configMatch[1]}</Group>`;
+            }
+            if (snippetsMatch && snippetsMatch[1].trim()) {
+                listElem += `
+    <Group ID="mapp.AlarmX.Core.Snippets">${snippetsMatch[1]}</Group>`;
+            }
+            listElem += `
+  </Element>`;
+            listElements.push(listElem);
+            
+            // Create category Element (empty)
+            categoryElements.push(`  <Element ID="${elemId}_Category" Type="mpalarmxcategory" />`);
+            
+            // Create query Element (empty)
+            queryElements.push(`  <Element ID="${elemId}_Query" Type="mpalarmxquery" />`);
+        }
+        
+        // Generate file contents
+        const newCoreContent = `<?xml version="1.0" encoding="utf-8"?>
+<Configuration>
+${coreElements.join('\n')}
+</Configuration>`;
+        
+        const newListContent = `<?xml version="1.0" encoding="utf-8"?>
+<Configuration>
+${listElements.join('\n')}
+</Configuration>`;
+        
+        const newCategoryContent = `<?xml version="1.0" encoding="utf-8"?>
+<Configuration>
+${categoryElements.join('\n')}
+</Configuration>`;
+        
+        const newQueryContent = `<?xml version="1.0" encoding="utf-8"?>
+<Configuration>
+${queryElements.join('\n')}
+</Configuration>`;
+        
+        // Delete the original file
+        this.projectFiles.delete(originalPath);
+        changes.push(`Removed original file: ${fileName}`);
+        
+        // Add new files
+        const newCorePath = folderPath + baseName + '_1.mpalarmxcore';
+        this.projectFiles.set(newCorePath, {
+            content: newCoreContent,
+            type: 'mapp_component',
+            name: baseName + '_1.mpalarmxcore',
+            extension: '.mpalarmxcore',
+            isBinary: false
+        });
+        changes.push(`Created ${baseName}_1.mpalarmxcore with ${elements.length} Element(s)`);
+        
+        const newListPath = folderPath + baseName + '_L.mpalarmxlist';
+        this.projectFiles.set(newListPath, {
+            content: newListContent,
+            type: 'mapp_component',
+            name: baseName + '_L.mpalarmxlist',
+            extension: '.mpalarmxlist',
+            isBinary: false
+        });
+        changes.push(`Created ${baseName}_L.mpalarmxlist with alarm definitions`);
+        
+        const newCategoryPath = folderPath + baseName + '_C.mpalarmxcategory';
+        this.projectFiles.set(newCategoryPath, {
+            content: newCategoryContent,
+            type: 'mapp_component',
+            name: baseName + '_C.mpalarmxcategory',
+            extension: '.mpalarmxcategory',
+            isBinary: false
+        });
+        changes.push(`Created ${baseName}_C.mpalarmxcategory`);
+        
+        const newQueryPath = folderPath + baseName + '_Q.mpalarmxquery';
+        this.projectFiles.set(newQueryPath, {
+            content: newQueryContent,
+            type: 'mapp_component',
+            name: baseName + '_Q.mpalarmxquery',
+            extension: '.mpalarmxquery',
+            isBinary: false
+        });
+        changes.push(`Created ${baseName}_Q.mpalarmxquery`);
+        
+        // Handle history file conversion
+        this.convertMpAlarmXHistory(folderPath, baseName, changes);
+        
+        // Update Package.pkg
+        this.updatePackagePkgForAlarmX(folderPath, baseName, changes);
+        
+        // Add to analysis results
+        this.analysisResults.push({
+            severity: 'info',
+            category: 'mappservices',
+            name: 'AlarmX Core Converted to AS6 Format',
+            description: `AlarmX core file with ${elements.length} Element(s) split into AS6 format files`,
+            file: folderPath,
+            autoFixed: true,
+            details: changes
+        });
+    }
+    
+    /**
+     * Find parent groups for alarm components from mpcomgroup files
+     * Returns a Map of alarmElementId -> parentGroupId
+     */
+    findMpComGroupParents() {
+        const parentMap = new Map();
+        
+        this.projectFiles.forEach((file, path) => {
+            if (!path.toLowerCase().endsWith('.mpcomgroup') || typeof file.content !== 'string') {
+                return;
+            }
+            
+            // Pattern to match: <Element ID="groupId"...> with Subnodes containing alarm reference
+            const elementPattern = /<Element ID="([^"]+)" Type="mpcomgroup">([\s\S]*?)<\/Element>/g;
+            let match;
+            
+            while ((match = elementPattern.exec(file.content)) !== null) {
+                const groupId = match[1];
+                const elementContent = match[2];
+                
+                // Find Subnodes Property values
+                const subnodePattern = /<Property ID="\d+" Value="([^"]+)" \/>/g;
+                let subnodeMatch;
+                
+                // Check within the Subnodes group
+                const subnodesMatch = elementContent.match(/<Group ID="Subnodes">([\s\S]*?)<\/Group>/);
+                if (subnodesMatch) {
+                    while ((subnodeMatch = subnodePattern.exec(subnodesMatch[1])) !== null) {
+                        const alarmId = subnodeMatch[1];
+                        parentMap.set(alarmId, groupId);
+                    }
+                }
+            }
+        });
+        
+        return parentMap;
+    }
+    
+    /**
+     * Convert MpAlarmX history files to AS6 format
+     */
+    convertMpAlarmXHistory(folderPath, baseName, changes) {
+        // Look for history file patterns
+        const historyPatterns = [
+            new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}_history\\.mpalarmxhistory$`, 'i'),
+            new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}H\\.mpalarmxhistory$`, 'i'),
+            new RegExp(`^mp_history\\.mpalarmxhistory$`, 'i')
+        ];
+        
+        const historyFilesToConvert = [];
+        
+        this.projectFiles.forEach((hFile, hPath) => {
+            if (!hPath.toLowerCase().endsWith('.mpalarmxhistory')) return;
+            
+            const hFileName = hPath.split(/[\/\\]/).pop();
+            const hFolderPath = hPath.substring(0, hPath.length - hFileName.length);
+            
+            if (hFolderPath.toLowerCase() === folderPath.toLowerCase()) {
+                historyFilesToConvert.push({ path: hPath, file: hFile, fileName: hFileName });
+            }
+        });
+        
+        for (const historyInfo of historyFilesToConvert) {
+            const { path: hPath, file: hFile, fileName: hFileName } = historyInfo;
+            const historyBaseName = hFileName.replace(/\.mpalarmxhistory$/i, '');
+            
+            // Update history file content to AS6 format
+            let historyContent = hFile.content;
+            if (typeof historyContent === 'string') {
+                // Add the mapp.Gen group if not present
+                if (!historyContent.includes('mapp.Gen')) {
+                    const elemIdMatch = historyContent.match(/<Element ID="([^"]+)"/);
+                    const elemId = elemIdMatch ? elemIdMatch[1] : 'mpAlarmXHistory';
+                    
+                    historyContent = `<?xml version="1.0" encoding="utf-8"?>
+<Configuration>
+  <Element ID="${elemId}" Type="mpalarmxhistory">
+    <Group ID="mapp.Gen">
+      <Property ID="Audit" Value="FALSE" />
+    </Group>
+  </Element>
+</Configuration>`;
+                    
+                    hFile.content = historyContent;
+                    changes.push(`Updated ${hFileName} with mapp.Gen group`);
+                }
+            }
+            
+            // Create accompanying history query file
+            const historyQueryPath = folderPath + historyBaseName + '_2.mpalarmxquery';
+            if (!this.projectFiles.has(historyQueryPath)) {
+                this.projectFiles.set(historyQueryPath, {
+                    content: this.generateAS6HistoryQueryFile(),
+                    type: 'mapp_component',
+                    name: historyBaseName + '_2.mpalarmxquery',
+                    extension: '.mpalarmxquery',
+                    isBinary: false
+                });
+                changes.push(`Created ${historyBaseName}_2.mpalarmxquery`);
+            }
+        }
+    }
+    
+    /**
+     * Update Package.pkg with new AlarmX file entries
+     */
+    updatePackagePkgForAlarmX(folderPath, baseName, changes) {
+        const pkgPath = folderPath + 'Package.pkg';
+        const pkgFile = this.projectFiles.get(pkgPath);
+        
+        if (pkgFile && typeof pkgFile.content === 'string') {
+            let pkgContent = pkgFile.content;
+            
+            // Remove old entry
+            pkgContent = pkgContent.replace(
+                new RegExp(`<Object Type="File">${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.mpalarmxcore</Object>\\s*`, 'gi'), 
+                ''
+            );
+            
+            // Add new entries before </Objects>
+            const newEntries = [
+                `<Object Type="File">${baseName}_1.mpalarmxcore</Object>`,
+                `<Object Type="File">${baseName}_C.mpalarmxcategory</Object>`,
+                `<Object Type="File">${baseName}_L.mpalarmxlist</Object>`,
+                `<Object Type="File">${baseName}_Q.mpalarmxquery</Object>`
+            ];
+            
+            // Check for existing entries to avoid duplicates
+            const existingEntries = new Set();
+            const existingPattern = /<Object Type="File">([^<]+)<\/Object>/g;
+            let existingMatch;
+            while ((existingMatch = existingPattern.exec(pkgContent)) !== null) {
+                existingEntries.add(existingMatch[1].toLowerCase());
+            }
+            
+            const entriesToAdd = newEntries.filter(e => {
+                const fileName = e.match(/>([^<]+)</)[1].toLowerCase();
+                return !existingEntries.has(fileName);
+            });
+            
+            if (entriesToAdd.length > 0) {
+                pkgContent = pkgContent.replace(
+                    /<\/Objects>/,
+                    entriesToAdd.map(e => '    ' + e).join('\n') + '\n  </Objects>'
+                );
+                
+                pkgFile.content = pkgContent;
+                changes.push('Updated Package.pkg with new file entries');
+            }
+        }
+    }
+    
+    /**
+     * Convert AlarmX core file with BySeverity section (old format)
+     */
+    convertMpAlarmXCoreWithBySeverity(originalPath, file, baseName, folderPath, changes) {
+        const content = file.content;
+        const pathParts = originalPath.split(/[\/\\]/);
+        const fileName = pathParts.pop();
+        
+        console.log(`  Converting with BySeverity format: ${fileName}`);
+        
         // Parse the AS4 content
         const bySeverityMatch = content.match(/<Group ID="mapp\.AlarmX\.Core">\s*<Group ID="BySeverity">([\s\S]*?)<\/Group>\s*<\/Group>/);
         const configurationMatch = content.match(/<Group ID="mapp\.AlarmX\.Core\.Configuration">([\s\S]*?)<\/Group>\s*(?=<Group ID="mapp\.AlarmX\.Core\.Snippets">|<\/Element>)/);
         const snippetsMatch = content.match(/<Group ID="mapp\.AlarmX\.Core\.Snippets">([\s\S]*?)<\/Group>\s*<\/Element>/);
         
         if (!bySeverityMatch) {
-            console.log(`  Skipping ${fileName} - no BySeverity section found (may already be AS6 format)`);
+            console.log(`  Skipping ${fileName} - no BySeverity section found`);
             return;
         }
         
@@ -2727,6 +3075,81 @@ ${mappingGroups}
 <Configuration>
   <Element ID="mpAlarmXHistory_Query" Type="mpalarmxquery" />
 </Configuration>`;
+    }
+
+    /**
+     * Convert MpComGroup configuration files from AS4 to AS6 format.
+     * 
+     * AS4 format has Linking/Subnodes groups:
+     *   <Element ID="gGroupStretchHood" Type="mpcomgroup">
+     *     <Group ID="Linking">
+     *       <Group ID="Subnodes">
+     *         <Property ID="0" Value="gAlarmStretchHood" />
+     *       </Group>
+     *     </Group>
+     *     <Selector ID="Alarms" Value="MpAlarmX" />
+     *   </Element>
+     * 
+     * AS6 format removes the Linking/Subnodes groups:
+     *   <Element ID="gGroupStretchHood" Type="mpcomgroup">
+     *     <Selector ID="Alarms" Value="MpAlarmX" />
+     *   </Element>
+     */
+    autoApplyMpComGroupConversion() {
+        console.log('Converting MpComGroup configuration to AS6 format...');
+        
+        let convertedCount = 0;
+        
+        this.projectFiles.forEach((file, path) => {
+            if (path.toLowerCase().endsWith('.mpcomgroup') && 
+                typeof file.content === 'string' &&
+                file.content.includes('mpcomgroup')) {
+                
+                const converted = this.convertMpComGroup(file.content);
+                if (converted !== file.content) {
+                    file.content = converted;
+                    convertedCount++;
+                    console.log(`  Converted: ${path}`);
+                    
+                    this.analysisResults.push({
+                        severity: 'info',
+                        category: 'mappservices',
+                        name: 'MpComGroup Converted to AS6 Format',
+                        description: 'Removed Linking/Subnodes groups from MpComGroup configuration',
+                        file: path,
+                        autoFixed: true,
+                        details: ['Removed Linking/Subnodes groups, kept Selector elements']
+                    });
+                }
+            }
+        });
+        
+        console.log(`Converted ${convertedCount} MpComGroup file(s) to AS6 format`);
+    }
+    
+    /**
+     * Convert a single MpComGroup file content to AS6 format
+     */
+    convertMpComGroup(content) {
+        // Remove the Linking/Subnodes group structure from each Element
+        // The pattern matches:
+        //   <Group ID="Linking">
+        //     <Group ID="Subnodes">
+        //       ...any properties...
+        //     </Group>
+        //   </Group>
+        
+        let result = content;
+        
+        // Pattern to match the Linking group with optional whitespace/newlines
+        const linkingPattern = /<Group ID="Linking">\s*<Group ID="Subnodes">[\s\S]*?<\/Group>\s*<\/Group>\s*/g;
+        
+        result = result.replace(linkingPattern, '');
+        
+        // Clean up any extra blank lines that might result
+        result = result.replace(/\n\s*\n\s*\n/g, '\n\n');
+        
+        return result;
     }
 
     /**
