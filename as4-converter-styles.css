@@ -317,6 +317,22 @@ body {
     display: none !important;
 }
 
+/* Warning Banner */
+.warning-banner {
+    background-color: #fff3cd;
+    border: 2px solid #ffc107;
+    border-radius: var(--radius);
+    padding: 15px;
+    margin-bottom: 20px;
+    color: #856404;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.warning-banner strong {
+    font-weight: 600;
+}
+
 /* Empty State */
 .empty-state {
     text-align: center;

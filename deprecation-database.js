@@ -875,7 +875,7 @@ const DeprecationDatabase = {
                 { old: "memmove", new: "brsmemmove", notes: "Same interface - copies overlapping memory" },
                 { old: "memcmp", new: "brsmemcmp", notes: "Same interface - compares memory areas" },
                 { old: "strcat", new: "brsstrcat", notes: "Same interface - concatenates strings" },
-                { old: "strlen", new: "brsstrlen", notes: "Same interface - returns string length" },
+                { old: "strlen", new: "brsstrlen", notes: "Return type changed from UINT to UDINT - wrapped with UDINT_TO_UINT for compatibility", wrapWith: "UDINT_TO_UINT" },
                 { old: "strcpy", new: "brsstrcpy", notes: "Same interface - copies string" },
                 { old: "strcmp", new: "brsstrcmp", notes: "Same interface - compares strings" }
             ]
@@ -926,17 +926,52 @@ const DeprecationDatabase = {
         {
             id: "lib_asmath",
             name: "AsMath",
-            severity: "error",
+            severity: "warning",
             category: "utilities",
-            description: "Math library - superseded",
-            replacement: { name: "AsBrMath", description: "Modern math library" },
-            notes: "Direct function replacements available.",
-            removedIn: "AS5.0",
+            description: "Math library - deprecated in AS6, replaced by AsBrMath",
+            replacement: { name: "AsBrMath", description: "B&R math library with 'brm' prefix functions" },
+            notes: "AsMath library must be replaced with AsBrMath. All AsMath functions have direct AsBrMath equivalents with 'brm' prefix (e.g., pow → brmpow, ceil → brmceil). Constants also have 'brm' prefix (e.g., amPI → brmPI). The library replacement and function/constant renaming will be handled automatically.",
+            removedIn: "AS6.0",
+            autoReplace: true,
+            libraryPath: "LibrariesForAS6/Library_2/AsBrMath",
             functionMappings: [
-                { old: "sin", new: "SIN", notes: "Built-in function" },
-                { old: "cos", new: "COS", notes: "Built-in function" },
-                { old: "sqrt", new: "SQRT", notes: "Built-in function" },
-                { old: "abs", new: "ABS", notes: "Built-in function" }
+                // Math functions
+                { old: "atan2", new: "brmatan2", notes: "Same interface - arctangent of y/x" },
+                { old: "ceil", new: "brmceil", notes: "Same interface - ceiling function" },
+                { old: "cosh", new: "brmcosh", notes: "Same interface - hyperbolic cosine" },
+                { old: "floor", new: "brmfloor", notes: "Same interface - floor function" },
+                { old: "fmod", new: "brmfmod", notes: "Same interface - floating-point modulo" },
+                { old: "frexp", new: "brmfrexp", notes: "Same interface - extract mantissa and exponent" },
+                { old: "ldexp", new: "brmldexp", notes: "Same interface - load exponent" },
+                { old: "modf", new: "brmmodf", notes: "Same interface - extract integer and fraction" },
+                { old: "pow", new: "brmpow", notes: "Same interface - power function" },
+                { old: "sinh", new: "brmsinh", notes: "Same interface - hyperbolic sine" },
+                { old: "tanh", new: "brmtanh", notes: "Same interface - hyperbolic tangent" }
+            ],
+            constantMappings: [
+                // Math constants - full list from AsMath
+                { old: "am2_SQRTPI", new: "brm2_SQRTPI", notes: "2/sqrt(pi)" },
+                { old: "amSQRT1_2", new: "brmSQRT1_2", notes: "sqrt(1/2)" },
+                { old: "amSQRTPI", new: "brmSQRTPI", notes: "sqrt(pi)" },
+                { old: "amLOG2_E", new: "brmLOG2_E", notes: "log2(e)" },
+                { old: "amLOG10E", new: "brmLOG10E", notes: "log10(e)" },
+                { old: "amIVLN10", new: "brmINVLN10", notes: "1/ln(10)" },
+                { old: "amINVLN2", new: "brmINVLN2", notes: "1/ln(2)" },
+                { old: "amTWOPI", new: "brmTWOPI", notes: "2*pi" },
+                { old: "amSQRT3", new: "brmSQRT3", notes: "sqrt(3)" },
+                { old: "amSQRT2", new: "brmSQRT2", notes: "sqrt(2)" },
+                { old: "amLOG2E", new: "brmLOG2E", notes: "log2(e)" },
+                { old: "amLN2LO", new: "brmLN2LO", notes: "ln(2) low part" },
+                { old: "amLN2HI", new: "brmLN2HI", notes: "ln(2) high part" },
+                { old: "am3PI_4", new: "brm3PI_4", notes: "3*pi/4" },
+                { old: "amPI_4", new: "brmPI_4", notes: "pi/4" },
+                { old: "amPI_2", new: "brmPI_2", notes: "pi/2" },
+                { old: "amLN10", new: "brmLN10", notes: "ln(10)" },
+                { old: "am2_PI", new: "brm2_PI", notes: "2/pi" },
+                { old: "am1_PI", new: "brm1_PI", notes: "1/pi" },
+                { old: "amLN2", new: "brmLN2", notes: "ln(2)" },
+                { old: "amPI", new: "brmPI", notes: "pi" },
+                { old: "amE", new: "brmE", notes: "e (Euler's number)" }
             ]
         },
         {
@@ -1024,9 +1059,10 @@ const DeprecationDatabase = {
             name: "AsSafety",
             severity: "warning",
             category: "safety",
-            description: "Safety library - superseded",
-            replacement: { name: "MpSafety", description: "mapp Safety component" },
-            notes: "mapp Safety provides certified safety functions.",
+            description: "Safety library - deprecated, requires manual migration",
+            replacement: null,
+            autoReplace: false,
+            notes: "AsSafety is deprecated and has no direct replacement. Safety conversion must be handled manually using SafeLOGIC, SafeMOTION, or other certified safety solutions.",
             removedIn: "AS5.5"
         },
         {

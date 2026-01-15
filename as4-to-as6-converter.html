@@ -48,7 +48,14 @@
 
                 <div id="projectInfo" class="project-info hidden">
                     <h3>📋 Project Summary</h3>
+                    <div id="as6Warning" class="warning-banner hidden">
+                        ⚠️ <strong>AS6 Project Detected</strong> - This tool is for AS4 to AS6 conversion only. AS6 projects cannot be converted.
+                    </div>
                     <div class="info-grid">
+                        <div class="info-item">
+                            <span class="info-label">AS Version:</span>
+                            <span id="asVersion" class="info-value">-</span>
+                        </div>
                         <div class="info-item">
                             <span class="info-label">Total Files:</span>
                             <span id="totalFiles" class="info-value">0</span>
