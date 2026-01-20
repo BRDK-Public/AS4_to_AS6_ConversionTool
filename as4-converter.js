@@ -352,11 +352,16 @@ class AS4Converter {
             // mappView custom widgets and keyboards
             '.numpad', '.compoundwidget', '.stylesset',
             // OPC UA
-            '.uaserver', '.uad',
+            '.uaserver', '.uad', '.uacfg', '.uadcfg',
             // mapp components
             '.mpalarmxcore', '.mpalarmxhistory', '.mprecipexml', '.mprecipecsv', '.mpdatarecorder',
             '.mpalarmxlist', '.mpalarmxcategory', '.mpalarmxquery',
             '.mpcomgroup', '.mpfilemanagerui',
+            '.mpwebxs', '.mpreportcore', '.mpaudittrail',  // mappServices additional components
+            // mappVision
+            '.visionapplication', '.visioncomponent', '.vicfg',
+            // VC (Visual Components / Keyboards)
+            '.dis',
             // Security and access
             '.role', '.user', '.firewallrules',
             // DTM / Device configuration
@@ -374,7 +379,17 @@ class AS4Converter {
             // Git/config
             '.gitignore',
             // Licenses and docs
-            '.md', '.doc', '.txt'
+            '.md', '.doc', '.txt',
+            // Documents folder files (must be copied unchanged)
+            '.pdf', '.chm', '.hlp',                              // Documentation/help files
+            '.docx', '.xls', '.xlsx', '.xlsm', '.ppt', '.pptx',  // Office documents
+            '.scn',                                               // Scene files
+            '.stl', '.obj', '.step', '.stp', '.iges', '.igs',    // 3D model files
+            '.xdd', '.eds', '.gsd', '.gsdml',                    // Device description files
+            '.exe', '.dll',                                       // Executables
+            '.zip', '.rar', '.7z',                               // Archives
+            '.bin', '.dat',                                       // Binary data files
+            '.csv', '.json'                                       // Data files
         ];
         // Folders to exclude (temp/build artifacts)
         const excludedFolders = ['Temp', 'Binaries', 'Diagnosis'];
@@ -597,16 +612,29 @@ class AS4Converter {
             '.page', '.layout', '.dialog', '.theme', '.styles',
             '.vis', '.mappviewcfg', '.widgetlibrary', '.snippet',
             '.numpad', '.compoundwidget', '.stylesset',
-            '.uaserver', '.uad',
+            '.uaserver', '.uad', '.uacfg', '.uadcfg',
             '.mpalarmxcore', '.mpalarmxhistory', '.mprecipexml', '.mprecipecsv', '.mpdatarecorder',
             '.mpalarmxlist', '.mpalarmxcategory', '.mpalarmxquery',
             '.mpcomgroup', '.mpfilemanagerui',
+            '.mpwebxs', '.mpreportcore', '.mpaudittrail',  // mappServices additional
+            '.visionapplication', '.visioncomponent', '.vicfg',  // mappVision
+            '.dis',  // VC keyboards
             '.role', '.user', '.firewallrules',
             '.dtm', '.dtmdre', '.dtmtre', '.dtmdri',
             '.ett', '.language', '.sfapp', '.swt',
             '.jpg', '.svg', '.png', '.gif', '.bmp', '.ico',
             '.ps1', '.bat', '.cmd', '.gitignore',
-            '.md', '.doc', '.txt'
+            '.md', '.doc', '.txt',
+            // Documents folder files (must be copied unchanged)
+            '.pdf', '.chm', '.hlp',                              // Documentation/help files
+            '.docx', '.xls', '.xlsx', '.xlsm', '.ppt', '.pptx',  // Office documents
+            '.scn',                                               // Scene files
+            '.stl', '.obj', '.step', '.stp', '.iges', '.igs',    // 3D model files
+            '.xdd', '.eds', '.gsd', '.gsdml',                    // Device description files
+            '.exe', '.dll',                                       // Executables
+            '.zip', '.rar', '.7z',                               // Archives
+            '.bin', '.dat',                                       // Binary data files
+            '.csv', '.json'                                       // Data files
         ];
 
         const excludedFolders = ['Temp', 'Binaries', 'Diagnosis'];
@@ -868,7 +896,28 @@ class AS4Converter {
     }
 
     // Binary file extensions that should not be read as text
-    static BINARY_EXTENSIONS = ['.a', '.o', '.br', '.png', '.jpg', '.gif', '.bmp', '.ico', '.svg'];
+    static BINARY_EXTENSIONS = [
+        // Compiled/object files
+        '.a', '.o', '.br',
+        // Images
+        '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.svg', '.tif', '.tiff',
+        // Documents
+        '.pdf', '.chm', '.doc', '.docx', '.xls', '.xlsx', '.xlsm', '.ppt', '.pptx',
+        // 3D models
+        '.stl', '.obj', '.step', '.stp', '.iges', '.igs',
+        // Archives
+        '.zip', '.rar', '.7z', '.tar', '.gz',
+        // Device descriptions
+        '.xdd', '.eds', '.gsd', '.gsdml',
+        // Executables
+        '.exe', '.dll', '.so',
+        // Scene/simulation files
+        '.scn',
+        // Help files
+        '.hlp',
+        // Binary data
+        '.bin', '.dat'
+    ];
     
     readFileContent(file) {
         return new Promise((resolve, reject) => {
