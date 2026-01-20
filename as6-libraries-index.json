@@ -1080,6 +1080,93 @@
 
                                                           }
                                             },
+                               "mappVision":  {
+                                                  "6.0.0":  {
+                                                                "ViAccess":  {
+                                                                                 "version":  "V6.0.0",
+                                                                                 "files":  [
+                                                                                               "binary.lby",
+                                                                                               "ViAccess.fun",
+                                                                                               "ViAccess.typ",
+                                                                                               "ViAccess.var",
+                                                                                               "ViAccessBlob.typ",
+                                                                                               "ViAccessClutterMatching.typ",
+                                                                                               "ViAccessCodeReader.typ",
+                                                                                               "ViAccessDeepOCR.typ",
+                                                                                               "ViAccessImageAcquisition.typ",
+                                                                                               "ViAccessMatching.typ",
+                                                                                               "ViAccessMeasurement.typ",
+                                                                                               "ViAccessOCR.typ",
+                                                                                               "ViAccessPixelCounter.typ",
+                                                                                               "ViAccessSubPixelBlob.typ",
+                                                                                               "SG4/ViAccess.h",
+                                                                                               "SG4/ARM/libViAccess.a",
+                                                                                               "SG4/ARM/ViAccess.br",
+                                                                                               "SG4/IA32/libViAccess.a",
+                                                                                               "SG4/IA32/ViAccess.br"
+                                                                                           ]
+                                                                             },
+                                                                "ViBase":  {
+                                                                               "version":  "V6.0.0",
+                                                                               "files":  [
+                                                                                             "binary.lby",
+                                                                                             "ViBase.fun",
+                                                                                             "ViBase.typ",
+                                                                                             "ViBase.var",
+                                                                                             "SG4/ViBase.h",
+                                                                                             "SG4/ARM/libViBase.a",
+                                                                                             "SG4/ARM/ViBase.br",
+                                                                                             "SG4/IA32/libViBase.a",
+                                                                                             "SG4/IA32/ViBase.br"
+                                                                                         ]
+                                                                           }
+                                                            },
+                                                  "6.4.0":  {
+                                                                "ViAccess":  {
+                                                                                 "version":  "V6.4.0",
+                                                                                 "files":  [
+                                                                                               "binary.lby",
+                                                                                               "ViAccess.fun",
+                                                                                               "ViAccess.typ",
+                                                                                               "ViAccess.var",
+                                                                                               "ViAccess2p5DBlob.typ",
+                                                                                               "ViAccessAnomalyDetection.typ",
+                                                                                               "ViAccessBlob.typ",
+                                                                                               "ViAccessClassification.typ",
+                                                                                               "ViAccessClutterMatching.typ",
+                                                                                               "ViAccessCodeReader.typ",
+                                                                                               "ViAccessDeepOCR.typ",
+                                                                                               "ViAccessImageAcquisition.typ",
+                                                                                               "ViAccessMatching.typ",
+                                                                                               "ViAccessMeasurement.typ",
+                                                                                               "ViAccessObjectDetection.typ",
+                                                                                               "ViAccessOCR.typ",
+                                                                                               "ViAccessPixelCounter.typ",
+                                                                                               "ViAccessSimpleMatching.typ",
+                                                                                               "ViAccessSubPixelBlob.typ",
+                                                                                               "SG4/ViAccess.h",
+                                                                                               "SG4/ARM/libViAccess.a",
+                                                                                               "SG4/ARM/ViAccess.br",
+                                                                                               "SG4/IA32/libViAccess.a",
+                                                                                               "SG4/IA32/ViAccess.br"
+                                                                                           ]
+                                                                             },
+                                                                "ViBase":  {
+                                                                               "version":  "V6.4.0",
+                                                                               "files":  [
+                                                                                             "binary.lby",
+                                                                                             "ViBase.fun",
+                                                                                             "ViBase.typ",
+                                                                                             "ViBase.var",
+                                                                                             "SG4/ViBase.h",
+                                                                                             "SG4/ARM/libViBase.a",
+                                                                                             "SG4/ARM/ViBase.br",
+                                                                                             "SG4/IA32/libViBase.a",
+                                                                                             "SG4/IA32/ViBase.br"
+                                                                                         ]
+                                                                           }
+                                                            }
+                                              },
                                "mappConnect":  {
                                                    "6.1.0":  {
 

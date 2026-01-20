@@ -4263,32 +4263,46 @@ ${mappingGroups}
             const ext = filePath.toLowerCase().split('.').pop();
             if (ext !== 'pkg') return;
             
-            const content = file.content;
-            const originalContent = content;
+            let content = file.content;
+            let modified = false;
             
-            // Pattern to match: <Safety SafetyRelease="x.xx" />
-            const safetyReleasePattern = /<Safety\s+SafetyRelease="[^"]+"\s*\/>/gi;
+            // Pattern 1: <Safety SafetyRelease="x.xx" />
+            const safetyReleasePattern1 = /<Safety\s+SafetyRelease="[^"]+"\s*\/>\s*\n?/gi;
             
-            if (safetyReleasePattern.test(content)) {
-                // Remove the SafetyRelease line
-                const newContent = content.replace(safetyReleasePattern, (match) => {
+            if (safetyReleasePattern1.test(content)) {
+                content = content.replace(safetyReleasePattern1, (match) => {
                     removedCount++;
-                    console.log(`Removing SafetyRelease from ${filePath}: ${match.trim()}`);
-                    return `<!-- AS6: SafetyRelease not supported - removed: ${match.trim()} -->`;
+                    modified = true;
+                    console.log(`Removing SafetyRelease (format 1) from ${filePath}: ${match.trim()}`);
+                    return ''; // Remove completely, no comment needed
                 });
-                
-                file.content = newContent;
+            }
+            
+            // Pattern 2: <SafetyRelease Version="x.xx.x" /> inside TechnologyPackages
+            const safetyReleasePattern2 = /\s*<SafetyRelease\s+Version="[^"]+"\s*\/>\s*\n?/gi;
+            
+            if (safetyReleasePattern2.test(content)) {
+                content = content.replace(safetyReleasePattern2, (match) => {
+                    removedCount++;
+                    modified = true;
+                    console.log(`Removing SafetyRelease (format 2) from ${filePath}: ${match.trim()}`);
+                    return '\n'; // Remove, just keep a newline
+                });
+            }
+            
+            if (modified) {
+                file.content = content;
                 
                 this.analysisResults.push({
                     type: 'safety_config',
                     severity: 'info',
                     category: 'configuration',
                     name: 'SafetyRelease removed',
-                    description: 'Removed SafetyRelease attribute (not supported in AS6)',
+                    description: 'Removed SafetyRelease entries (not supported in AS6)',
                     file: filePath,
                     autoFixed: true,
                     notes: 'SafetyRelease is no longer supported in AS6 and has been removed from package configuration.',
-                    details: ['The line has been replaced with an XML comment for reference']
+                    details: ['SafetyRelease entries have been removed from both Safety element and TechnologyPackages section']
                 });
             }
         });
