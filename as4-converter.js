@@ -976,6 +976,42 @@ class AS4Converter {
     // ANALYSIS ENGINE
     // ==========================================
 
+    detectObsoleteTargetHardware() {
+        const obsoleteHardware = [];
+        const obsoleteList = DeprecationDatabase.as6Format.obsoleteTargetHardware;
+        
+        // Scan all .hw files for hardware module types
+        for (const [path, file] of this.projectFiles) {
+            if (file.extension === '.hw' && !file.isBinary) {
+                const content = file.content;
+                
+                // Extract hardware module IDs from XML
+                // Format: <Module Name="..." Type="5PP5CP.US15-01" X="..." Y="..." />
+                const modulePattern = /<Module\s+[^>]*Type="([^"]+)"[^>]*>/gi;
+                let match;
+                
+                while ((match = modulePattern.exec(content)) !== null) {
+                    const moduleType = match[1];
+                    
+                    // Check if this module type is obsolete
+                    if (obsoleteList.includes(moduleType)) {
+                        const existingEntry = obsoleteHardware.find(h => h.moduleType === moduleType);
+                        if (existingEntry) {
+                            existingEntry.locations.push(path);
+                        } else {
+                            obsoleteHardware.push({
+                                moduleType: moduleType,
+                                locations: [path]
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        
+        return obsoleteHardware;
+    }
+
     async runAnalysis() {
         // Block analysis for AS6 projects
         if (this.isAS6Project) {
@@ -991,6 +1027,36 @@ class AS4Converter {
         this.elements.btnScan.textContent = '⏳ Analyzing...';
         
         try {
+            // Check for obsolete target hardware first - this is a blocking error
+            const obsoleteHardware = this.detectObsoleteTargetHardware();
+            if (obsoleteHardware.length > 0) {
+                // Set blocking error flag
+                this.hasBlockingErrors = true;
+                
+                // Create blocking errors for each obsolete hardware type
+                obsoleteHardware.forEach(hw => {
+                    this.analysisResults.push({
+                        severity: 'error',
+                        type: 'hardware',
+                        category: 'Obsolete Target Hardware',
+                        name: `Obsolete PLC/Target: ${hw.moduleType}`,
+                        file: hw.locations[0],
+                        line: 0,
+                        message: `Hardware module ${hw.moduleType} is not supported in AS6`,
+                        description: `This hardware module is not supported in AS6 and will break the hardware tree during conversion.`,
+                        details: `Found in ${hw.locations.length} location(s):\n${hw.locations.map(loc => `  • ${loc}`).join('\n')}\n\n⚠️ Action Required: Replace this hardware with an AS6-compatible model in your AS4 project before running the conversion.`,
+                        blocking: true,
+                        autoFix: false,
+                        replacement: null
+                    });
+                });
+                
+                // Display results and show blocking error banner
+                this.displayAnalysisResults();
+                this.switchTab('analysis');
+                return; // Stop analysis here - don't continue with other checks
+            }
+            
             // Analyze each file
             for (const [path, file] of this.projectFiles) {
                 await this.analyzeFile(path, file);
