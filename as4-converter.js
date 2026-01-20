@@ -1305,6 +1305,9 @@ class AS4Converter {
             // Auto-remove SafetyRelease from .pkg files (not supported in AS6)
             this.autoRemoveSafetyRelease();
             
+            // Auto-update Visual Components firmware version in cpu.pkg files
+            this.autoUpdateVcFirmwareVersion();
+            
             // Update UI
             this.displayAnalysisResults();
             this.switchTab('analysis');
@@ -4308,6 +4311,58 @@ ${mappingGroups}
         });
         
         console.log(`SafetyRelease removal complete: ${removedCount} entries removed`);
+    }
+
+    /**
+     * Visual Components firmware version must be updated for AS6
+     * Changes <Vc FirmwareVersion="V4.xx.x" /> to <Vc FirmwareVersion="6.0.0" />
+     */
+    autoUpdateVcFirmwareVersion() {
+        console.log('Updating Visual Components firmware version in .pkg files...');
+        
+        let updatedCount = 0;
+        const targetVersion = '6.0.0';
+        
+        this.projectFiles.forEach((file, filePath) => {
+            if (file.isBinary) return;
+            
+            const ext = filePath.toLowerCase().split('.').pop();
+            if (ext !== 'pkg') return;
+            
+            let content = file.content;
+            let modified = false;
+            
+            // Pattern: <Vc FirmwareVersion="V4.34.2" /> or any version
+            const vcVersionPattern = /<Vc\s+FirmwareVersion="([^"]+)"\s*\/>/gi;
+            
+            content = content.replace(vcVersionPattern, (match, oldVersion) => {
+                if (oldVersion !== targetVersion) {
+                    updatedCount++;
+                    modified = true;
+                    console.log(`Updating VC FirmwareVersion in ${filePath}: ${oldVersion} -> ${targetVersion}`);
+                    return `<Vc FirmwareVersion="${targetVersion}" />`;
+                }
+                return match;
+            });
+            
+            if (modified) {
+                file.content = content;
+                
+                this.analysisResults.push({
+                    type: 'vc_firmware',
+                    severity: 'info',
+                    category: 'configuration',
+                    name: 'Visual Components firmware updated',
+                    description: 'Updated Visual Components FirmwareVersion to AS6 compatible version',
+                    file: filePath,
+                    autoFixed: true,
+                    notes: `FirmwareVersion updated to ${targetVersion} for AS6 compatibility.`,
+                    details: ['Visual Components firmware version has been updated to the AS6 required version']
+                });
+            }
+        });
+        
+        console.log(`VC FirmwareVersion update complete: ${updatedCount} entries updated`);
     }
 
     /**
