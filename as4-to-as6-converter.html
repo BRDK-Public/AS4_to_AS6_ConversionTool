@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AS4 to AS6 Conversion Tool</title>
-    <link rel="stylesheet" href="as4-converter-styles.css">
+    <link rel="stylesheet" href="as4-converter-styles.css?v=20260121c">
 </head>
 <body>
     <div class="app-container">
@@ -244,6 +244,14 @@
                         <div id="reportSummary" class="report-summary"></div>
                     </div>
 
+                    <div class="download-section" style="margin-bottom: 20px;">
+                        <h4>📦 Download Converted Project</h4>
+                        <button id="btnDownloadProject" class="btn btn-primary btn-large">
+                            📦 Download Converted Project (ZIP)
+                        </button>
+                        <p class="help-text" style="margin-top: 8px;">All auto-applied changes are included in the download.</p>
+                    </div>
+
                     <div class="report-section">
                         <h4>📋 Detailed Findings</h4>
                         <div id="reportFindings" class="report-findings"></div>
@@ -266,13 +274,6 @@
                             <button id="btnExportJSON" class="btn btn-secondary">📋 JSON</button>
                             <button id="btnExportCSV" class="btn btn-secondary">📊 CSV</button>
                         </div>
-                    </div>
-
-                    <div class="download-section">
-                        <h4>Download Converted Project</h4>
-                        <button id="btnDownloadProject" class="btn btn-primary btn-large">
-                            📦 Download Converted Project (ZIP)
-                        </button>
                     </div>
                 </div>
             </div>
@@ -337,7 +338,7 @@
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <script src="deprecation-database.js?v=20260121b"></script>
-    <script src="as4-converter.js?v=20260121b"></script>
+    <script src="deprecation-database.js?v=20260121c"></script>
+    <script src="as4-converter.js?v=20260121c"></script>
 </body>
 </html>

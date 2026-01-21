@@ -5408,9 +5408,33 @@ ${mappingGroups}
             localization: 'Localization (TMX)',
             compiler: 'Compiler Settings',
             runtime: 'Automation Runtime',
-            visualization: 'Visualization (VC3/VC4)'
+            visualization: 'Visualization (VC3/VC4)',
+            safety_config: 'Safety Configuration',
+            vc_firmware: 'Visual Components'
         };
         return names[type] || type;
+    }
+
+    getTypeName(type) {
+        return `${this.getTypeIcon(type)} ${this.formatTypeName(type)}`;
+    }
+
+    shortenPath(path, maxLength = 50) {
+        if (!path) return '';
+        if (path.length <= maxLength) return path;
+        
+        // Try to show the last parts of the path
+        const parts = path.split(/[/\\]/);
+        let result = parts[parts.length - 1]; // Start with filename
+        
+        for (let i = parts.length - 2; i >= 0 && result.length < maxLength; i--) {
+            const newResult = parts[i] + '/' + result;
+            if (newResult.length > maxLength) {
+                return '.../' + result;
+            }
+            result = newResult;
+        }
+        return result;
     }
 
     resetAnalysisUI() {
@@ -6091,31 +6115,65 @@ ${mappingGroups}
             </div>
         `;
         
-        // Render findings table
-        this.elements.reportFindings.innerHTML = `
-            <table class="report-table">
-                <thead>
-                    <tr>
-                        <th>Type</th>
-                        <th>Name</th>
-                        <th>Severity</th>
-                        <th>File</th>
-                        <th>Status</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${this.analysisResults.map(f => `
-                        <tr class="${f.status}">
-                            <td>${this.getTypeIcon(f.type)}</td>
-                            <td>${f.name}</td>
-                            <td><span class="severity-badge ${f.severity}">${f.severity}</span></td>
-                            <td>${f.file}</td>
-                            <td>${f.status}</td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        `;
+        // Render findings table - grouped by type in collapsible sections
+        const findingsByType = {};
+        this.analysisResults.forEach(f => {
+            const typeName = this.getTypeName(f.type);
+            if (!findingsByType[typeName]) {
+                findingsByType[typeName] = [];
+            }
+            findingsByType[typeName].push(f);
+        });
+
+        let findingsHTML = '';
+        Object.entries(findingsByType).forEach(([typeName, findings]) => {
+            const errorCount = findings.filter(f => f.severity === 'error').length;
+            const warningCount = findings.filter(f => f.severity === 'warning').length;
+            const appliedCount = findings.filter(f => f.status === 'applied').length;
+            
+            // Determine badge class based on severity
+            let badgeClass = 'info';
+            if (errorCount > 0) badgeClass = 'error';
+            else if (warningCount > 0) badgeClass = 'warning';
+            
+            findingsHTML += `
+                <details class="findings-group">
+                    <summary class="findings-group-header">
+                        <span class="findings-group-title">${typeName}</span>
+                        <span class="findings-group-badges">
+                            <span class="badge count">${findings.length} items</span>
+                            ${errorCount > 0 ? `<span class="badge error">${errorCount} errors</span>` : ''}
+                            ${warningCount > 0 ? `<span class="badge warning">${warningCount} warnings</span>` : ''}
+                            ${appliedCount > 0 ? `<span class="badge applied">${appliedCount} applied</span>` : ''}
+                        </span>
+                    </summary>
+                    <div class="findings-group-content">
+                        <table class="report-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Severity</th>
+                                    <th>File</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${findings.map(f => `
+                                    <tr class="${f.status}">
+                                        <td>${f.name}</td>
+                                        <td><span class="severity-badge ${f.severity}">${f.severity}</span></td>
+                                        <td title="${f.file}">${this.shortenPath(f.file)}</td>
+                                        <td><span class="status-badge ${f.status || 'pending'}">${f.status || 'pending'}</span></td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </details>
+            `;
+        });
+
+        this.elements.reportFindings.innerHTML = findingsHTML || '<p>No findings to display.</p>';
         
         // Render changes
         const appliedChanges = this.analysisResults.filter(f => f.status === 'applied');

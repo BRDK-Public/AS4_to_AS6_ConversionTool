@@ -892,6 +892,106 @@ body {
     opacity: 0.6;
 }
 
+/* Collapsible Findings Groups */
+.findings-group {
+    margin-bottom: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: var(--card-bg);
+}
+
+.findings-group-header {
+    padding: 12px 16px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg-color);
+    border-radius: var(--radius);
+    user-select: none;
+    font-weight: 500;
+}
+
+.findings-group-header:hover {
+    background: #e9ecef;
+}
+
+.findings-group[open] .findings-group-header {
+    border-bottom: 1px solid var(--border-color);
+    border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.findings-group-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.findings-group-badges {
+    display: flex;
+    gap: 6px;
+}
+
+.findings-group-badges .badge {
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.findings-group-badges .badge.count {
+    background: #e9ecef;
+    color: var(--text-color);
+}
+
+.findings-group-badges .badge.error {
+    background: #fee2e2;
+    color: var(--error-color);
+}
+
+.findings-group-badges .badge.warning {
+    background: #fef3cd;
+    color: #856404;
+}
+
+.findings-group-badges .badge.applied {
+    background: #d1fae5;
+    color: var(--success-color);
+}
+
+.findings-group-content {
+    padding: 0;
+}
+
+.findings-group-content .report-table {
+    margin: 0;
+    border: none;
+    border-radius: 0 0 var(--radius) var(--radius);
+}
+
+.status-badge {
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: capitalize;
+}
+
+.status-badge.applied {
+    background: #d1fae5;
+    color: var(--success-color);
+}
+
+.status-badge.pending {
+    background: #fef3cd;
+    color: #856404;
+}
+
+.status-badge.skipped {
+    background: #e9ecef;
+    color: var(--text-light);
+}
+
 /* Changes List */
 .changes-list {
     max-height: 400px;
