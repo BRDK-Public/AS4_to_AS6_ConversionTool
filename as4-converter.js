@@ -1468,7 +1468,14 @@ class AS4Converter {
                         file: path,
                         line: this.getLineNumber(content, match.index),
                         context: this.getCodeContext(content, match.index),
-                        original: match[0]
+                        original: match[0],
+                        autoReplace: func.autoReplace || false,
+                        conversion: (func.autoReplace && func.replacement) ? {
+                            type: 'function',
+                            from: func.name,
+                            to: func.replacement.name,
+                            automated: true
+                        } : null
                     });
                 }
             }
@@ -2522,15 +2529,16 @@ class AS4Converter {
                     content = content.replace(pattern, newFunc + '(');
                     modified = true;
                     
-                    // Add a finding for the replacement
-                    this.addFinding({
-                        type: 'function',
-                        name: oldFunc,
-                        file: filePath,
-                        severity: 'info',
-                        status: 'applied',
-                        replacement: funcPattern.replacement,
-                        notes: `[Auto-applied: ${oldFunc} → ${newFunc}]`
+                    // Mark existing findings for this function/file as applied
+                    this.analysisResults.forEach(finding => {
+                        if (finding.type === 'function' && 
+                            finding.name === oldFunc && 
+                            finding.file === filePath &&
+                            finding.status !== 'applied') {
+                            finding.status = 'applied';
+                            finding.autoFixed = true;
+                            finding.notes = (finding.notes || '') + ` [Auto-applied: ${oldFunc} → ${newFunc}]`;
+                        }
                     });
                 }
             });
@@ -2664,6 +2672,7 @@ class AS4Converter {
             if ((finding.type === 'deprecated_function_call' || finding.type === 'deprecated_constant') 
                 && finding.autoReplace && finding.status !== 'applied') {
                 finding.status = 'applied';
+                finding.autoFixed = true;
                 finding.notes = (finding.notes || '') + ' [Auto-applied]';
             }
         });
@@ -5575,7 +5584,21 @@ ${mappingGroups}
             const oldFunc = finding.name;
             const newFunc = finding.replacement.name;
             after = before.replace(new RegExp(oldFunc, 'gi'), newFunc);
-            notes = finding.replacement.notes;
+            notes = finding.replacement.notes || finding.notes;
+        } else if (finding.type === 'deprecated_function_call' && finding.conversion) {
+            // Deprecated library function call replacement (e.g., memset → brsmemset)
+            const oldFunc = finding.conversion.from;
+            const newFunc = finding.conversion.to;
+            const escapedOld = oldFunc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            after = before.replace(new RegExp(`\\b${escapedOld}\\s*\\(`, 'gi'), `${newFunc}(`);
+            notes = finding.notes || `Replace ${oldFunc} with ${newFunc}`;
+        } else if (finding.type === 'deprecated_constant' && finding.conversion) {
+            // Deprecated constant replacement (e.g., amPI → brmPI)
+            const oldConst = finding.conversion.from;
+            const newConst = finding.conversion.to;
+            const escapedOld = oldConst.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            after = before.replace(new RegExp(`\\b${escapedOld}\\b`, 'gi'), newConst);
+            notes = finding.notes || `Replace ${oldConst} with ${newConst}`;
         } else if (finding.type === 'hardware' && finding.replacement) {
             // Replace hardware reference
             after = before.replace(finding.name, finding.replacement.name);
@@ -5624,6 +5647,36 @@ ${mappingGroups}
         return Array.from(libraries);
     }
 
+    /**
+     * Detect technology packages used in the project based on file types and folders
+     * This catches packages like mappView that don't have traditional libraries
+     */
+    detectUsedTechPackages() {
+        const techPackages = new Set();
+        
+        // mappView detection: Look for mappView files/folders
+        const mappViewExtensions = ['.binding', '.eventbinding', '.mappviewcfg', '.content', '.page', '.layout', '.dialog'];
+        
+        this.projectFiles.forEach((file, path) => {
+            const pathLower = path.toLowerCase();
+            const ext = this.getFileExtension(path);
+            
+            // Check for mappView by file extensions or folder name
+            if (mappViewExtensions.includes(ext) || pathLower.includes('/mappview/') || pathLower.includes('\\mappview\\')) {
+                techPackages.add('mappView');
+            }
+            
+            // Check for mappVision by file extensions or folder name
+            if (['.visionapplication', '.visioncomponent', '.vicfg'].includes(ext) || 
+                pathLower.includes('/mappvision/') || pathLower.includes('\\mappvision\\')) {
+                techPackages.add('mappVision');
+            }
+        });
+        
+        console.log('Detected technology packages from files:', Array.from(techPackages));
+        return Array.from(techPackages);
+    }
+
     applyConversion(findingId) {
         const finding = this.analysisResults.find(f => f.id === findingId);
         if (!finding) {
@@ -5665,7 +5718,11 @@ ${mappingGroups}
             // Full project file conversion using the database method
             // Collect libraries used in the project for subVersion generation
             const usedLibraries = this.collectUsedLibraries();
-            convertedContent = DeprecationDatabase.convertProjectFileToAS6(originalContent, { usedLibraries });
+            const usedTechPackages = this.detectUsedTechPackages();
+            convertedContent = DeprecationDatabase.convertProjectFileToAS6(originalContent, { 
+                usedLibraries,
+                usedTechPackages 
+            });
         } else if (finding.type === 'compiler' && finding.conversion) {
             // GCC compiler version replacement
             convertedContent = originalContent.replace(
@@ -5730,6 +5787,19 @@ ${mappingGroups}
             // Track variable replacements for cross-file consistency
             this.functionBlockReplacements = this.functionBlockReplacements || new Map();
             this.functionBlockReplacements.set(oldName, newName);
+        } else if (finding.type === 'function' && finding.conversion && finding.autoReplace) {
+            // Function replacement (e.g., memset → brsmemset)
+            const oldFunc = finding.conversion.from;
+            const newFunc = finding.conversion.to;
+            
+            // Replace function call: oldFunc( → newFunc(
+            const escapedOld = oldFunc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const pattern = new RegExp(`\\b${escapedOld}\\s*\\(`, 'g');
+            convertedContent = originalContent.replace(pattern, `${newFunc}(`);
+            
+            // Track function replacements
+            this.functionReplacements = this.functionReplacements || new Map();
+            this.functionReplacements.set(oldFunc, newFunc);
         } else if (finding.type === 'deprecated_function_call' && finding.conversion && finding.autoReplace) {
             // Deprecated library function call replacement (AsString → AsBrStr functions)
             const oldFunc = finding.conversion.from;

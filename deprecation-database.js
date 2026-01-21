@@ -1605,7 +1605,7 @@ const DeprecationDatabase = {
 `;
         
         // Add converted technology packages
-        const convertedPackages = this.convertTechnologyPackages(techPackages, options.usedLibraries);
+        const convertedPackages = this.convertTechnologyPackages(techPackages, options.usedLibraries, options.usedTechPackages);
         convertedPackages.forEach(pkg => {
             if (pkg.subVersions) {
                 let attrs = Object.entries(pkg.subVersions).map(([k, v]) => `${k}="${v}"`).join(' ');
@@ -1647,8 +1647,9 @@ const DeprecationDatabase = {
      * Convert AS4 technology packages to AS6 versions
      * @param {Array} as4Packages - Technology packages from AS4 project
      * @param {Array} usedLibraries - List of libraries actually used in the project
+     * @param {Array} usedTechPackages - List of tech packages detected from file types (e.g., mappView from .binding files)
      */
-    convertTechnologyPackages(as4Packages, usedLibraries = []) {
+    convertTechnologyPackages(as4Packages, usedLibraries = [], usedTechPackages = []) {
         const as6Packages = [];
         const tpRef = this.as6Format.technologyPackages;
         
@@ -1768,6 +1769,25 @@ const DeprecationDatabase = {
                                 note: `Added for library: ${libName}`
                             });
                         }
+                    }
+                }
+            });
+        }
+        
+        // Add technology packages detected from file types (e.g., mappView from .binding files)
+        if (usedTechPackages && usedTechPackages.length > 0) {
+            usedTechPackages.forEach(techPkgName => {
+                const exists = as6Packages.some(p => p.name === techPkgName);
+                if (!exists) {
+                    const ref = tpRef[techPkgName];
+                    if (ref) {
+                        console.log(`Adding ${techPkgName} technology package (detected from file types)`);
+                        as6Packages.push({
+                            name: techPkgName,
+                            version: ref.as6Version,
+                            subVersions: null,
+                            note: `Added based on file type detection`
+                        });
                     }
                 }
             });
