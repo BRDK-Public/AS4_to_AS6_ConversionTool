@@ -334,7 +334,7 @@ class AS4Converter {
             // Project and package
             '.xml', '.pkg', '.apj',
             // Motion/Axis
-            '.ax', '.apt', '.ncm', '.ncc', '.dob',
+            '.ax', '.apt', '.ncm', '.ncc', '.dob', '.vax',
             // Localization
             '.tmx', '.textconfig', '.units',
             // I/O and mapping
@@ -603,7 +603,7 @@ class AS4Converter {
             '.st', '.fun', '.typ', '.var', '.prg', '.svar',
             '.hw', '.hwl', '.sw', '.per',
             '.xml', '.pkg', '.apj',
-            '.ax', '.apt', '.ncm', '.ncc', '.dob',
+            '.ax', '.apt', '.ncm', '.ncc', '.dob', '.vax',
             '.tmx', '.textconfig', '.units',
             '.iom', '.vvm',
             '.lby', '.br', '.a', '.o',
@@ -745,7 +745,7 @@ class AS4Converter {
                 // Project and package
                 '.xml', '.pkg', '.apj',
                 // Motion/Axis
-                '.ax', '.apt', '.ncm', '.ncc', '.dob',
+                '.ax', '.apt', '.ncm', '.ncc', '.dob', '.vax',
                 // Localization
                 '.tmx', '.textconfig', '.units',
                 // I/O and mapping
@@ -899,6 +899,8 @@ class AS4Converter {
     static BINARY_EXTENSIONS = [
         // Compiled/object files
         '.a', '.o', '.br',
+        // Motion/Axis files
+        '.vax',
         // Images
         '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.svg', '.tif', '.tiff',
         // Documents

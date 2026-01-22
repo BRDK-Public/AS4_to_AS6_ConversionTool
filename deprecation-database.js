@@ -267,20 +267,21 @@ const DeprecationDatabase = {
         // Library to Technology Package mapping for AS6 upgrades
         // Maps AS4 5.x libraries to their AS6 6.x equivalents
         libraryMapping: {
-            // mappServices (6.0.0 & 6.2.0) - Data management and services
+            // mappServices (6.2.0) - Data management and services
+            // All libraries must use the same version as the technology package
             'MpAlarmX': { techPackage: 'mappServices', as6Version: '6.2.0', as6LibVersion: '6.2.0' },
-            'MpAudit': { techPackage: 'mappServices', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
-            'MpBackup': { techPackage: 'mappServices', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
-            'MpCodeBox': { techPackage: 'mappServices', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
-            'MpCom': { techPackage: 'mappServices', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
+            'MpAudit': { techPackage: 'mappServices', as6Version: '6.2.0', as6LibVersion: '6.2.0' },
+            'MpBackup': { techPackage: 'mappServices', as6Version: '6.2.0', as6LibVersion: '6.2.0' },
+            'MpCodeBox': { techPackage: 'mappServices', as6Version: '6.2.0', as6LibVersion: '6.2.0' },
+            'MpCom': { techPackage: 'mappServices', as6Version: '6.2.0', as6LibVersion: '6.2.0' },
             'MpData': { techPackage: 'mappServices', as6Version: '6.2.0', as6LibVersion: '6.2.0' },
-            'MpDatabase': { techPackage: 'mappServices', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
-            'MpFile': { techPackage: 'mappServices', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
-            'MpIO': { techPackage: 'mappServices', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
+            'MpDatabase': { techPackage: 'mappServices', as6Version: '6.2.0', as6LibVersion: '6.2.0' },
+            'MpFile': { techPackage: 'mappServices', as6Version: '6.2.0', as6LibVersion: '6.2.0' },
+            'MpIO': { techPackage: 'mappServices', as6Version: '6.2.0', as6LibVersion: '6.2.0' },
             'MpRecipe': { techPackage: 'mappServices', as6Version: '6.2.0', as6LibVersion: '6.2.0' },
-            'MpReport': { techPackage: 'mappServices', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
-            'MpSequence': { techPackage: 'mappServices', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
-            'MpUserX': { techPackage: 'mappServices', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
+            'MpReport': { techPackage: 'mappServices', as6Version: '6.2.0', as6LibVersion: '6.2.0' },
+            'MpSequence': { techPackage: 'mappServices', as6Version: '6.2.0', as6LibVersion: '6.2.0' },
+            'MpUserX': { techPackage: 'mappServices', as6Version: '6.2.0', as6LibVersion: '6.2.0' },
             'MpServer': { techPackage: 'mappServices', as6Version: '6.2.0', as6LibVersion: '6.2.0' },
             
             // mappView (6.0.0) - Visualization
