@@ -5023,7 +5023,6 @@ ${mappingGroups}
                     // First try the library's specific version (libInfo.version), then fall back to package version
                     const pkgVersions = index.TechnologyPackages?.[packageName];
                     const libSpecificVersion = libInfo.version; // e.g., "6.2.0" for MpServer
-                    console.log(`    TechPkg lookup for '${packageName}' lib '${libName}': libVersion='${libSpecificVersion}', pkgVersion='${pkgInfo.version}'`);
                     
                     if (pkgVersions) {
                         // Try library-specific version first (some libraries like MpServer only exist in certain versions)
@@ -5034,13 +5033,11 @@ ${mappingGroups}
                         if (libSpecificVersion && pkgVersions[libSpecificVersion]?.[libName]) {
                             versionData = pkgVersions[libSpecificVersion];
                             usedVersion = libSpecificVersion;
-                            console.log(`      Using library-specific version '${libSpecificVersion}' for ${libName}`);
                         }
                         // Priority 2: Fall back to package version
                         else if (pkgVersions[pkgInfo.version]?.[libName]) {
                             versionData = pkgVersions[pkgInfo.version];
                             usedVersion = pkgInfo.version;
-                            console.log(`      Using package version '${pkgInfo.version}' for ${libName}`);
                         }
                         // Priority 3: Search all versions to find one that contains this library
                         else {
@@ -5048,7 +5045,6 @@ ${mappingGroups}
                                 if (verData[libName]) {
                                     versionData = verData;
                                     usedVersion = ver;
-                                    console.log(`      Found ${libName} in version '${ver}' (searched all versions)`);
                                     break;
                                 }
                             }
@@ -6799,12 +6795,32 @@ ${mappingGroups}
             
             // Add AS6 library files to the ZIP (in Logical/Libraries folder)
             // Need to determine the project folder prefix from existing files
+            // Look for the actual Logical/Libraries path, not SafeLOGIC paths
             let projectFolderPrefix = '';
             for (const [path] of this.projectFiles) {
-                const logicalIndex = path.toLowerCase().indexOf('logical');
-                if (logicalIndex > 0) {
-                    projectFolderPrefix = path.substring(0, logicalIndex);
+                // Skip SafeLOGIC paths - they have their own Logical folder structure
+                if (path.toLowerCase().includes('safelogic')) {
+                    continue;
+                }
+                // Look for Logical/Libraries specifically to find the correct project root
+                const logicalLibrariesMatch = path.match(/^(.*?)Logical[/\\]Libraries[/\\]/i);
+                if (logicalLibrariesMatch) {
+                    projectFolderPrefix = logicalLibrariesMatch[1];
                     break;
+                }
+            }
+            
+            // Fallback: if no Logical/Libraries found, look for just Logical (but not in SafeLOGIC)
+            if (!projectFolderPrefix) {
+                for (const [path] of this.projectFiles) {
+                    if (path.toLowerCase().includes('safelogic')) {
+                        continue;
+                    }
+                    const logicalMatch = path.match(/^(.*?)Logical[/\\]/i);
+                    if (logicalMatch) {
+                        projectFolderPrefix = logicalMatch[1];
+                        break;
+                    }
                 }
             }
             
@@ -6862,9 +6878,15 @@ ${mappingGroups}
             
             // Show warning if no library files were added despite having packages to fetch
             if (addedLibFiles === 0 && as6LibraryFiles.size === 0) {
+                const missingLibs = Array.from(techPackageLibraries).join(', ');
                 console.error('WARNING: No AS6 library files were fetched. The converted project may be missing required libraries.');
+                console.error('Missing libraries:', missingLibs);
                 console.error('Please ensure you are running this tool via a web server (not file:// protocol).');
                 console.error('Check the browser console for any fetch errors.');
+                
+                // Add a visible note to the conversion report
+                const warningNote = `\n\n=== WARNING ===\nNo AS6 library files were fetched. The following libraries may be missing:\n${missingLibs}\n\nPlease ensure you are running this tool via a web server and check the browser console for errors.`;
+                projectFolder.file('_conversion-summary.txt', summary + warningNote);
             }
         } else {
             console.log('=== No required packages, skipping AS6 library fetch ===');
