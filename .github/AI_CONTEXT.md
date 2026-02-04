@@ -35,6 +35,7 @@ This is a web-based tool for converting B&R Automation Studio 4 (AS4) projects t
 - `autoApplyProjectFileConversion()` - Auto-converts .apj file to AS6 format
 - `autoApplyDeprecatedLibraryReplacements()` - Handles function/constant/library replacements
 - `clearProject()` - Resets all state
+- `shouldIncludeFile(filePath)` - Centralized file filtering logic (path-based, not extension-based)
 
 ### DeprecationDatabase (deprecation-database.js)
 
@@ -97,6 +98,26 @@ Some deprecated libraries have no AS6 replacement (e.g., AsSafety):
 - Detected when loading .apj file in `processFiles()`
 - Displayed in Project Summary UI
 - If AS6 detected: show warning banner, disable scan button
+
+### File Filtering Logic (shouldIncludeFile)
+The `shouldIncludeFile(filePath)` method uses **path-based filtering** instead of extension whitelists:
+
+**Included files:**
+- All files in `Logical/` folder and subfolders
+- All files in `Physical/` folder and subfolders
+- `.apj` files anywhere (project files)
+
+**Excluded folders:**
+- `Temp/` - Build artifacts
+- `Binaries/` - Compiled binaries
+- `Diagnosis/` - Diagnostic files
+
+**Why path-based?** The previous extension whitelist approach missed files with:
+- Unusual extensions (`.cpp`, `.hpp`, `.sfopt`, `.axisfeature`, `.drawio`, etc.)
+- Case-sensitive extensions (`.CIC`, `.DIT`, `.POU` vs `.cic`, `.dit`, `.pou`)
+- No extension at all (CHANGELOG, LICENSE, SDAPP-Part*)
+
+This approach ensures all project source files are included regardless of their extension.
 
 ### Function Return Type Changes (wrapWith)
 Some AS6 functions have different return types than their AS4 equivalents:
@@ -188,6 +209,24 @@ Library replacement files are stored in:
 
 Technology packages are in:
 `LibrariesForAS6/TechnologyPackages/[PackageName]/[Version]/`
+
+## Recent Changes (February 2026)
+
+19. **Fixed function/constant replacements to only apply to Structured Text files** (v1.1.1)
+    - Function mappings (e.g., `strlen→brsstrlen`) are for IEC 61131-3 ST only
+    - Removed `.c`, `.cpp`, `.h` from processed file extensions
+    - Now only processes: `.st`, `.var`, `.typ`, `.fun`, `.prg`
+    - C/C++ files in libraries are no longer incorrectly modified
+
+18. **Major refactor: File filtering now path-based instead of extension whitelist** (v1.1.0)
+    - Created centralized `shouldIncludeFile(filePath)` method
+    - Includes all files from `Logical/` and `Physical/` folders
+    - Includes `.apj` files regardless of location
+    - Excludes `Temp/`, `Binaries/`, `Diagnosis/` folders
+    - Fixes missing files with unusual extensions (`.cpp`, `.hpp`, `.sfopt`, `.axisfeature`, etc.)
+    - Fixes case sensitivity issues (`.CIC` vs `.cic`)
+    - Fixes files without extensions (CHANGELOG, LICENSE, etc.)
+    - Reduced code duplication - removed 3 separate `relevantExtensions` lists
 
 ## Recent Changes (January 2026)
 

@@ -5,11 +5,23 @@
             "name": "Start AS4 to AS6 Converter",
             "type": "node-terminal",
             "request": "launch",
-            "command": "python -m http.server 8000",
+            "command": "python server.py",
             "cwd": "${workspaceFolder}",
             "serverReadyAction": {
                 "pattern": "Serving HTTP on",
                 "uriFormat": "http://localhost:8000/as4-to-as6-converter.html",
+                "action": "debugWithChrome"
+            }
+        },
+        {
+            "name": "Start AS4 to AS6 Converter (Debug Mode)",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "python server.py",
+            "cwd": "${workspaceFolder}",
+            "serverReadyAction": {
+                "pattern": "Serving HTTP on",
+                "uriFormat": "http://localhost:8000/as4-to-as6-converter.html?debug=true",
                 "action": "debugWithChrome"
             }
         }

@@ -82,6 +82,18 @@ const DeprecationDatabase = {
                 newInAS6: true
                 // Note: MpAlarmX, MpBase, etc. are libraries, not subVersions
             },
+            'mappMotion': { 
+                as4Version: '5.24.1', 
+                as6Version: '6.0.0', 
+                required: false
+                // Note: MpAxis, MpCnc, MpRobotics, McAcpAx, McAxis, McBase are libraries, not subVersions
+            },
+            'mappControl': { 
+                as4Version: '5.24.1', 
+                as6Version: '6.1.0', 
+                required: false
+                // Note: MpTemp, MpHydAxis, MpPump, MTBasics, MTFilter, etc. are libraries, not subVersions
+            },
             'mappSafety': { 
                 as4Version: '5.24.1', 
                 as6Version: '6.2.0', 
