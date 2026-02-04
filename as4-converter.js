@@ -4,8 +4,8 @@
  */
 
 // Debug version - UPDATE THIS AFTER EVERY CHANGE
-const DEBUG_VERSION = "1.1.2";
-const DEBUG_MESSAGE = "Added: Motion type migration McAcpAxCamAut* → McCamAut* for AS6 McAxis library (2026-02-03)";
+const DEBUG_VERSION = "1.1.6";
+const DEBUG_MESSAGE = "Fixed: MpReportCore.Name → .FileName now only matches MpReportCore* variable names";
 
 // Check if debug mode is enabled via query parameter
 const IS_DEBUG_MODE = new URLSearchParams(window.location.search).get('debug') === 'true';
@@ -1307,7 +1307,11 @@ class AS4Converter {
             // Auto-remove deprecated function blocks (MpAlarmXAcknowledgeAll, etc.)
             this.autoApplyDeprecatedFunctionBlockRemoval();
             
+            // Auto-comment deprecated struct members (McCamAutDefineType.DataSize, etc.)
+            this.autoCommentDeprecatedStructMembers();
+            
             // Auto-remove SafetyRelease from .pkg files (not supported in AS6)
+            this.autoRemoveSafetyRelease();
             this.autoRemoveSafetyRelease();
             
             // Auto-update Visual Components firmware version in cpu.pkg files
@@ -1418,6 +1422,12 @@ class AS4Converter {
         
         // Check for deprecated motion types (McAcpAx* → Mc* for AS6)
         this.scanForDeprecatedMotionTypes(path, content);
+        
+        // Check for deprecated enum values (AS4 → AS6 renames)
+        this.scanForDeprecatedEnumValues(path, content);
+        
+        // Check for deprecated struct/FB member names (AS4 → AS6 renames)
+        this.scanForDeprecatedMemberNames(path, content);
         
         // Check for function calls that match deprecated functions
         DeprecationDatabase.functions.forEach(func => {
@@ -1603,6 +1613,104 @@ class AS4Converter {
                         type: 'motion_type',
                         from: mapping.old,
                         to: mapping.new,
+                        automated: true
+                    }
+                });
+            }
+        });
+    }
+
+    /**
+     * Scan for deprecated enum values (AS4 → AS6 migration)
+     * Some enum values were renamed in AS6 libraries
+     */
+    scanForDeprecatedEnumValues(path, content) {
+        // Get enum mappings from the database
+        const enumMappings = DeprecationDatabase.as6Format?.enumMappings;
+        if (!enumMappings || enumMappings.length === 0) {
+            return;
+        }
+        
+        enumMappings.forEach(mapping => {
+            // Create regex pattern to match enum values as standalone identifiers
+            const pattern = new RegExp(`\\b${this.escapeRegex(mapping.old)}\\b`, 'gi');
+            let match;
+            
+            while ((match = pattern.exec(content)) !== null) {
+                this.addFinding({
+                    type: 'deprecated_constant',
+                    name: mapping.old,
+                    severity: 'warning',
+                    description: `Deprecated enum value: ${mapping.old} → ${mapping.new}`,
+                    replacement: { 
+                        name: mapping.new, 
+                        description: mapping.notes 
+                    },
+                    notes: `Enum value ${mapping.old} is renamed to ${mapping.new} in AS6 ${mapping.library} library.`,
+                    file: path,
+                    line: this.getLineNumber(content, match.index),
+                    context: this.getCodeContext(content, match.index),
+                    original: match[0],
+                    autoReplace: true,
+                    parentLibrary: mapping.library,
+                    conversion: {
+                        type: 'constant',
+                        from: mapping.old,
+                        to: mapping.new,
+                        automated: true
+                    }
+                });
+            }
+        });
+    }
+
+    /**
+     * Scan for deprecated struct/FB member names (AS4 → AS6 migration)
+     * Some struct/function block members were renamed in AS6 libraries
+     * Uses pattern-based matching to only match variables that contain the FB type name
+     * e.g., MpReportCore_0.Name, MpReportCore_Main.Name → .FileName
+     */
+    scanForDeprecatedMemberNames(path, content) {
+        // Get member mappings from the database
+        const memberMappings = DeprecationDatabase.as6Format?.memberMappings;
+        if (!memberMappings || memberMappings.length === 0) {
+            return;
+        }
+        
+        memberMappings.forEach(mapping => {
+            // Use the pattern from the mapping (e.g., "(MpReportCore\\w*)\\.Name\\b")
+            // This ensures we only match variables that contain the FB type name
+            const pattern = new RegExp(mapping.pattern, 'gi');
+            let match;
+            
+            while ((match = pattern.exec(content)) !== null) {
+                // match[0] = full match (e.g., "MpReportCore_0.Name")
+                // match[1] = captured group (e.g., "MpReportCore_0")
+                const varName = match[1];
+                const fullMatch = match[0];
+                
+                this.addFinding({
+                    type: 'deprecated_member_rename',
+                    name: `${mapping.structType}.${mapping.old}`,
+                    severity: 'warning',
+                    description: `Member rename: ${varName}.${mapping.old} → ${varName}.${mapping.new}`,
+                    replacement: { 
+                        name: `${varName}.${mapping.new}`, 
+                        description: mapping.notes 
+                    },
+                    notes: `In AS6, ${mapping.structType}.${mapping.old} was renamed to ${mapping.structType}.${mapping.new}.`,
+                    file: path,
+                    line: this.getLineNumber(content, match.index),
+                    context: this.getCodeContext(content, match.index),
+                    original: fullMatch,
+                    autoReplace: true,
+                    parentLibrary: mapping.library,
+                    conversion: {
+                        type: 'member_rename',
+                        pattern: mapping.pattern,
+                        replacement: mapping.replacement,
+                        from: fullMatch,
+                        to: fullMatch.replace(new RegExp(mapping.pattern, 'i'), mapping.replacement),
                         automated: true
                     }
                 });
@@ -4420,6 +4528,83 @@ ${mappingGroups}
     }
 
     /**
+     * Auto-comment lines using deprecated struct members that were removed in AS6
+     * 
+     * This handles cases where struct members existed in AS4 but were removed in AS6:
+     * - McCamAutDefineType.DataSize (removed in AS6)
+     * 
+     * Lines accessing these members will cause compile errors in AS6 and must be commented out.
+     */
+    autoCommentDeprecatedStructMembers() {
+        console.log('Commenting deprecated struct member usages...');
+        
+        const deprecatedMembers = DeprecationDatabase.deprecatedStructMembers || [];
+        if (deprecatedMembers.length === 0) {
+            console.log('No deprecated struct members defined');
+            return;
+        }
+        
+        let commentedCount = 0;
+        
+        deprecatedMembers.forEach(member => {
+            if (!member.autoComment) return;
+            
+            const memberPattern = new RegExp(member.pattern, 'gi');
+            
+            this.projectFiles.forEach((file, filePath) => {
+                if (file.isBinary) return;
+                
+                // Only process ST source files
+                const ext = filePath.toLowerCase().split('.').pop();
+                if (!['st', 'fun', 'prg'].includes(ext)) return;
+                
+                let content = file.content;
+                const lines = content.split('\n');
+                let modified = false;
+                const newLines = [];
+                
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    
+                    // Check if line contains the deprecated member pattern
+                    if (memberPattern.test(line) && !line.trim().startsWith('//') && !line.trim().startsWith('(*')) {
+                        // Comment out the line with explanation
+                        const todoMsg = member.todoMessage || `${member.structType}.${member.memberName} removed in AS6`;
+                        newLines.push(`(* AS6-REMOVED: ${line} *) // TODO: ${todoMsg}`);
+                        modified = true;
+                        commentedCount++;
+                        console.log(`Commented deprecated member usage in ${filePath}: ${line.trim()}`);
+                        // Reset regex lastIndex for next iteration
+                        memberPattern.lastIndex = 0;
+                    } else {
+                        newLines.push(line);
+                        // Reset regex lastIndex for next iteration
+                        memberPattern.lastIndex = 0;
+                    }
+                }
+                
+                if (modified) {
+                    file.content = newLines.join('\n');
+                    
+                    this.analysisResults.push({
+                        type: 'deprecated_struct_member',
+                        severity: member.severity,
+                        category: 'struct_member',
+                        name: `${member.structType}.${member.memberName}`,
+                        description: member.description,
+                        file: filePath,
+                        autoFixed: true,
+                        notes: member.notes,
+                        details: [`Search for "AS6-REMOVED" or "TODO: ${member.todoMessage}" in the file`]
+                    });
+                }
+            });
+        });
+        
+        console.log(`Deprecated struct member comment complete: ${commentedCount} usages commented out`);
+    }
+
+    /**
      * Remove SafetyRelease attribute from .pkg files
      * SafetyRelease is not supported in AS6 and must be removed from cpu.pkg files
      */
@@ -5749,6 +5934,8 @@ ${mappingGroups}
             deprecated_constant: '🔢',
             deprecated_motion_type: '🔀',
             deprecated_function_block: '🚫',
+            deprecated_struct_member: '🚫',
+            deprecated_member_rename: '✏️',
             hardware: '🔌',
             project: '📁',
             technology_package: '📦',
@@ -5773,6 +5960,8 @@ ${mappingGroups}
             deprecated_constant: 'Deprecated Constants',
             deprecated_motion_type: 'Deprecated Motion Types',
             deprecated_function_block: 'Removed Function Blocks',
+            deprecated_struct_member: 'Removed Struct Members',
+            deprecated_member_rename: 'Renamed Members',
             hardware: 'Hardware Modules',
             project: 'Project Format',
             technology_package: 'Technology Packages',
@@ -6004,6 +6193,12 @@ ${mappingGroups}
             const escapedOld = oldType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             after = before.replace(new RegExp(`\\b${escapedOld}\\b`, 'gi'), newType);
             notes = finding.notes || `Replace ${oldType} with ${newType}`;
+        } else if (finding.type === 'deprecated_member_rename' && finding.conversion) {
+            // Member rename replacement (e.g., MpReportCore_0.Name → MpReportCore_0.FileName)
+            // Uses pattern-based replacement to preserve the variable name
+            const pattern = new RegExp(finding.conversion.pattern, 'gi');
+            after = before.replace(pattern, finding.conversion.replacement);
+            notes = finding.notes || `Replace ${finding.conversion.from} with ${finding.conversion.to}`;
         } else if (finding.type === 'hardware' && finding.replacement) {
             // Replace hardware reference
             after = before.replace(finding.name, finding.replacement.name);
@@ -6245,6 +6440,15 @@ ${mappingGroups}
             // Track type replacements for reporting
             this.motionTypeReplacements = this.motionTypeReplacements || new Map();
             this.motionTypeReplacements.set(oldType, newType);
+        } else if (finding.type === 'deprecated_member_rename' && finding.conversion && finding.autoReplace) {
+            // Struct/FB member rename (e.g., MpReportCore_0.Name → MpReportCore_0.FileName)
+            // Uses pattern-based replacement to only match variables containing the FB type name
+            const pattern = new RegExp(finding.conversion.pattern, 'gi');
+            convertedContent = originalContent.replace(pattern, finding.conversion.replacement);
+            
+            // Track member renames for reporting
+            this.memberRenames = this.memberRenames || new Map();
+            this.memberRenames.set(finding.conversion.from, finding.conversion.to);
         } else if (finding.type === 'library' && finding.autoReplace && finding.replacement) {
             // Library reference replacement (e.g., AsString → AsBrStr in LIBRARY declarations)
             const oldLib = finding.name;

@@ -305,6 +305,37 @@ const DeprecationDatabase = {
             { old: 'McAcpAxAdvCamAutSetParType', new: 'McAdvCamAutSetParType', notes: 'Advanced cam automat set parameters' }
         ],
         
+        // Enum value mappings for AS4 → AS6 migration
+        // Some enum values were renamed in AS6 libraries
+        enumMappings: [
+            // MpFileManagerUISortOrderEnum changes in MpFile library
+            // AS4: mpFILE_SORT_BY_* → AS6: mpFILE_UI_SORT_BY_*
+            { old: 'mpFILE_SORT_BY_NAME_ASC', new: 'mpFILE_UI_SORT_BY_NAME_ASC', library: 'MpFile', notes: 'Sort by name ascending' },
+            { old: 'mpFILE_SORT_BY_NAME_DESC', new: 'mpFILE_UI_SORT_BY_NAME_DESC', library: 'MpFile', notes: 'Sort by name descending' },
+            { old: 'mpFILE_SORT_BY_SIZE_ASC', new: 'mpFILE_UI_SORT_BY_SIZE_ASC', library: 'MpFile', notes: 'Sort by size ascending' },
+            { old: 'mpFILE_SORT_BY_SIZE_DES', new: 'mpFILE_UI_SORT_BY_SIZE_DES', library: 'MpFile', notes: 'Sort by size descending' },
+            { old: 'mpFILE_SORT_BY_MOD_TIME_ASC', new: 'mpFILE_UI_SORT_BY_MOD_TIME_ASC', library: 'MpFile', notes: 'Sort by modified time ascending' },
+            { old: 'mpFILE_SORT_BY_MOD_TIME_DESC', new: 'mpFILE_UI_SORT_BY_MOD_TIME_DESC', library: 'MpFile', notes: 'Sort by modified time descending' }
+        ],
+        
+        // Struct/FB member mappings for AS4 → AS6 migration
+        // Some struct/function block members were renamed in AS6 libraries
+        // Pattern-based: matches variableName.OldMember where variableName contains the FB type name
+        memberMappings: [
+            // MpReportCore - .Name was renamed to .FileName in AS6
+            // Pattern matches: MpReportCore*.Name (e.g., MpReportCore_0.Name, MpReportCore_Main.Name)
+            { 
+                structType: 'MpReportCore', 
+                old: 'Name', 
+                new: 'FileName', 
+                library: 'MpReport', 
+                // Pattern: MpReportCore followed by any word chars, then .Name
+                pattern: '(MpReportCore\\w*)\\.Name\\b',
+                replacement: '$1.FileName',
+                notes: 'Member renamed from Name to FileName' 
+            }
+        ],
+        
         // Library to Technology Package mapping for AS6 upgrades
         // Maps AS4 5.x libraries to their AS6 6.x equivalents
         libraryMapping: {
@@ -712,6 +743,28 @@ const DeprecationDatabase = {
             notes: "This function block must be manually reimplemented. Instances will be removed from .var/.typ files and usages will be commented out in source files for manual review.",
             removedIn: "AS6.0",
             autoRemove: true
+        }
+    ],
+
+    // ==========================================
+    // DEPRECATED STRUCT MEMBERS (removed in AS6)
+    // ==========================================
+    // These are struct members that existed in AS4 but were removed in AS6.
+    // Code accessing these members will cause compile errors and must be commented out.
+    deprecatedStructMembers: [
+        {
+            id: "member_mccamautdefinetype_datasize",
+            structType: "McCamAutDefineType",
+            memberName: "DataSize",
+            // Pattern matches: variable.Data.DataSize or variable.DataSize (for direct struct access)
+            // Also matches assignment patterns
+            pattern: "\\.Data\\.DataSize\\b|\\.DataSize\\b",
+            severity: "warning",
+            description: "McCamAutDefineType.DataSize member removed in AS6",
+            notes: "The DataSize member was removed from McCamAutDefineType in AS6. Lines using this member must be commented out or removed.",
+            removedIn: "AS6.0",
+            autoComment: true,
+            todoMessage: "McCamAutDefineType.DataSize removed in AS6 - remove or rework this line"
         }
     ],
 
