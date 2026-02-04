@@ -333,6 +333,18 @@ const DeprecationDatabase = {
                 pattern: '(MpReportCore\\w*)\\.Name\\b',
                 replacement: '$1.FileName',
                 notes: 'Member renamed from Name to FileName' 
+            },
+            // MpAxisBasic - .Info.DigitalInputsStatus moved to .Info.AxisAdditionalInfo.DigitalInputStatus
+            // Pattern matches any variable ending with .Info.DigitalInputsStatus
+            { 
+                structType: 'MpAxisBasic', 
+                old: '.Info.DigitalInputsStatus', 
+                new: '.Info.AxisAdditionalInfo.DigitalInputStatus', 
+                library: 'MpAxis', 
+                // Pattern: match .Info.DigitalInputsStatus regardless of variable name
+                pattern: '\\.Info\\.DigitalInputsStatus\\b',
+                replacement: '.Info.AxisAdditionalInfo.DigitalInputStatus',
+                notes: 'Member path changed: .Info.DigitalInputsStatus → .Info.AxisAdditionalInfo.DigitalInputStatus' 
             }
         ],
         

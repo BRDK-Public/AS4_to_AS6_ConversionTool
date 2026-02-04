@@ -4,8 +4,8 @@
  */
 
 // Debug version - UPDATE THIS AFTER EVERY CHANGE
-const DEBUG_VERSION = "1.1.6";
-const DEBUG_MESSAGE = "Fixed: MpReportCore.Name → .FileName now only matches MpReportCore* variable names";
+const DEBUG_VERSION = "1.1.8";
+const DEBUG_MESSAGE = "Trying to fix DTM";
 
 // Check if debug mode is enabled via query parameter
 const IS_DEBUG_MODE = new URLSearchParams(window.location.search).get('debug') === 'true';
@@ -795,7 +795,7 @@ class AS4Converter {
         // Safety project files
         '.saf', '.sos', '.sim', '.swt', '.st1', '.sto', '.pr2',
         // DTM device configuration files (binary)
-        '.dtmdre', '.dtmdri', '.dtmtre',
+        '.dtm', '.dtmdre', '.dtmdri', '.dtmtre',
         // Help cache
         '.chw',
         // Source control cache
@@ -5006,6 +5006,105 @@ ${mappingGroups}
         }
     }
 
+    /**
+     * Add mCoWebSc.mcowebservercfg file to mappCockpit folders in Physical configurations.
+     * This file is required for AS6 mappCockpit web server configuration.
+     * 
+     * Project structure: ROOT/Physical/CONFIG/CPU/mappCockpit/
+     * We find mappCockpit folders by looking for existing mappCockpit/Package.pkg files.
+     */
+    async addMappCockpitWebServerConfig() {
+        // First check if mappCockpit is used in the project
+        const requiredPackages = this.getRequiredTechnologyPackages();
+        if (!requiredPackages.has('mappCockpit')) {
+            console.log('mappCockpit not used in project, skipping webserver config');
+            return;
+        }
+        
+        // Get the mappCockpit version
+        const mappCockpitVersion = requiredPackages.get('mappCockpit').version || '6.0.0';
+        console.log(`mappCockpit version: ${mappCockpitVersion}`);
+        
+        // Find mappCockpit folders by looking for mappCockpit/Package.pkg
+        const mappCockpitFolders = [];
+        this.projectFiles.forEach((file, path) => {
+            // Match: .../mappCockpit/Package.pkg
+            if (path.toLowerCase().endsWith('mappcockpit/package.pkg') || 
+                path.toLowerCase().endsWith('mappcockpit\\package.pkg')) {
+                const separator = path.includes('/') ? '/' : '\\';
+                const folderPath = path.substring(0, path.lastIndexOf(separator));
+                mappCockpitFolders.push({ path: folderPath, separator, packagePkg: path });
+            }
+        });
+        
+        if (mappCockpitFolders.length === 0) {
+            console.log('No mappCockpit folders found');
+            return;
+        }
+        
+        console.log(`Found ${mappCockpitFolders.length} mappCockpit folder(s)`);
+        
+        // Fetch the mCoWebSc.mcowebservercfg template file
+        const templatePath = `LibrariesForAS6/TechnologyPackages/mappCockpit/${mappCockpitVersion}/ObjectCatalog/Elements/mcowebservercfg/Template/mCoWebSc.mcowebservercfg`;
+        
+        try {
+            const response = await fetch(templatePath);
+            if (!response.ok) {
+                console.warn(`Could not fetch mCoWebSc.mcowebservercfg template: ${response.status}`);
+                return;
+            }
+            
+            const templateContent = await response.text();
+            
+            // Add the webserver config file to each mappCockpit folder
+            for (const { path: folderPath, separator, packagePkg } of mappCockpitFolders) {
+                const webServerConfigPath = folderPath + separator + 'mCoWebSc.mcowebservercfg';
+                
+                // Check if the file already exists
+                if (this.projectFiles.has(webServerConfigPath)) {
+                    console.log(`mCoWebSc.mcowebservercfg already exists in ${folderPath}`);
+                    continue;
+                }
+                
+                // Add the webserver config file
+                this.projectFiles.set(webServerConfigPath, {
+                    content: templateContent,
+                    isBinary: false,
+                    type: 'mapp_cockpit',
+                    name: 'mCoWebSc.mcowebservercfg',
+                    extension: '.mcowebservercfg',
+                    hasBOM: false
+                });
+                console.log(`Added mCoWebSc.mcowebservercfg to ${folderPath}`);
+                
+                // Update Package.pkg to include the new file
+                const packageFile = this.projectFiles.get(packagePkg);
+                if (packageFile && packageFile.content && !packageFile.content.includes('mCoWebSc.mcowebservercfg')) {
+                    let packageContent = packageFile.content;
+                    const insertPoint = packageContent.lastIndexOf('</Objects>');
+                    if (insertPoint !== -1) {
+                        const newEntry = '    <Object Type="File">mCoWebSc.mcowebservercfg</Object>\n  ';
+                        packageContent = packageContent.substring(0, insertPoint) + newEntry + packageContent.substring(insertPoint);
+                        this.projectFiles.set(packagePkg, { ...packageFile, content: packageContent });
+                        console.log(`Updated Package.pkg to include mCoWebSc.mcowebservercfg`);
+                    }
+                }
+                
+                // Add to analysis results
+                this.analysisResults.push({
+                    severity: 'info',
+                    category: 'mappCockpit',
+                    name: 'mappCockpit WebServer Config Added',
+                    description: `Added mCoWebSc.mcowebservercfg for AS6 mappCockpit web server configuration`,
+                    file: webServerConfigPath,
+                    autoFixed: true
+                });
+            }
+        } catch (error) {
+            console.error('Failed to add mappCockpit webserver config:', error);
+        }
+    }
+
     getRequiredTechnologyPackages() {
         // Collect all technology packages and libraries that need to be included
         const requiredPackages = new Map(); // packageName -> { version, libraries: Map, isLibrary2: bool }
@@ -6998,6 +7097,9 @@ ${mappingGroups}
         
         // Replace acp10sys.br files in Physical folders with AS6 version
         await this.replaceAcp10sysBrFiles();
+        
+        // Add mCoWebSc.mcowebservercfg to mappCockpit folders if mappCockpit is used
+        await this.addMappCockpitWebServerConfig();
         
         // Show progress dialog
         const progressDialog = document.getElementById('downloadProgressDialog');
