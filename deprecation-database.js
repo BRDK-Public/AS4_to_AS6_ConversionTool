@@ -276,6 +276,35 @@ const DeprecationDatabase = {
             '.dob': { name: 'Data Object', language: 'Ax' }
         },
         
+        // Motion type mappings for AS4 McAcpAx → AS6 McAxis migration
+        // In AS6, ACOPOS-specific types (McAcpAx*) are replaced with generic McAxis types (Mc*)
+        // Reference: AS6 Help - "Migrating from ACP10_MC to mapp Axis"
+        motionTypeMappings: [
+            // Main cam automat parameter types
+            { old: 'McAcpAxCamAutParType', new: 'McCamAutParType', notes: 'Main cam automat parameter structure' },
+            { old: 'McAcpAxCamAutCommonParType', new: 'McCamAutCommonParType', notes: 'Common parameters for all states' },
+            { old: 'McAcpAxCamAutStateParType', new: 'McCamAutStateParType', notes: 'State-specific parameters' },
+            { old: 'McAcpAxCamAutMasterParType', new: 'McCamAutMasterParType', notes: 'Master axis parameters' },
+            { old: 'McAcpAxCamAutAdvParType', new: 'McCamAutAdvParType', notes: 'Advanced parameters' },
+            { old: 'McAcpAxCamAutDefineType', new: 'McCamAutDefineType', notes: 'Cam automat definition' },
+            
+            // Cam automat state sub-types
+            { old: 'McAcpAxCamAutEventParType', new: 'McCamAutEventParType', notes: 'Event parameters' },
+            { old: 'McAcpAxCamAutCompParType', new: 'McCamAutCompParType', notes: 'Compensation parameters' },
+            { old: 'McAcpAxCamAutAdvStateParType', new: 'McCamAutAdvStateParType', notes: 'Advanced state parameters' },
+            
+            // Common parameters sub-types
+            { old: 'McAcpAxCamAutCtrlSettingsType', new: 'McCamAutCtrlSettingsType', notes: 'Control settings' },
+            { old: 'McAcpAxCamAutMsgSettingsType', new: 'McCamAutMsgSettingsType', notes: 'Message settings' },
+            { old: 'McAcpAxCamAutTriggerAndLatchType', new: 'McCamAutTriggerAndLatchType', notes: 'Trigger and latch settings' },
+            { old: 'McAcpAxCamAutStartStateParType', new: 'McCamAutStartStateParType', notes: 'Start state parameters' },
+            { old: 'McAcpAxCamAutAddAxesType', new: 'McCamAutAddAxesType', notes: 'Additional axes configuration' },
+            { old: 'McAcpAxCamAutCommonFactorsType', new: 'McCamAutCommonFactorsType', notes: 'Common factors' },
+            
+            // Additional ACOPOS-specific types that may need mapping
+            { old: 'McAcpAxAdvCamAutSetParType', new: 'McAdvCamAutSetParType', notes: 'Advanced cam automat set parameters' }
+        ],
+        
         // Library to Technology Package mapping for AS6 upgrades
         // Maps AS4 5.x libraries to their AS6 6.x equivalents
         libraryMapping: {

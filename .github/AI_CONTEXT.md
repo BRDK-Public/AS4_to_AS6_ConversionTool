@@ -65,6 +65,7 @@ This is a web-based tool for converting B&R Automation Studio 4 (AS4) projects t
 | `library` | 📚 | Library reference replacements |
 | `deprecated_function_call` | 🔄 | Function name replacements |
 | `deprecated_constant` | 🔢 | Constant name replacements |
+| `deprecated_motion_type` | 🔀 | Motion type replacements (McAcpAx* → Mc*) |
 | `deprecated_function_block` | 🚫 | Removed function blocks (unsupported in AS6) |
 | `project` | 📁 | Project file (.apj) conversion |
 | `technology_package` | 📦 | Tech package version updates |
@@ -211,6 +212,15 @@ Technology packages are in:
 `LibrariesForAS6/TechnologyPackages/[PackageName]/[Version]/`
 
 ## Recent Changes (February 2026)
+
+20. **Added motion type migration for McAcpAx → McAxis library types** (v1.1.2)
+    - New `motionTypeMappings` array in `deprecation-database.js`
+    - Maps ACOPOS-specific types (McAcpAx*) to generic McAxis types (Mc*)
+    - Key mappings: `McAcpAxCamAutParType → McCamAutParType` and 16 related nested types
+    - New methods: `scanForDeprecatedMotionTypes()`, `autoApplyMotionTypeReplacements()`
+    - New finding type: `deprecated_motion_type` with icon 🔀
+    - Reference: AS6 Help - "Migrating from ACP10_MC to mapp Axis"
+    - Only applies to ST files: `.st`, `.var`, `.typ`, `.fun`, `.prg`
 
 19. **Fixed function/constant replacements to only apply to Structured Text files** (v1.1.1)
     - Function mappings (e.g., `strlen→brsstrlen`) are for IEC 61131-3 ST only

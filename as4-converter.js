@@ -4,8 +4,8 @@
  */
 
 // Debug version - UPDATE THIS AFTER EVERY CHANGE
-const DEBUG_VERSION = "1.1.1";
-const DEBUG_MESSAGE = "Fixed: Function/constant replacements now only apply to .st files, not .c/.cpp/.h (2026-02-03)";
+const DEBUG_VERSION = "1.1.2";
+const DEBUG_MESSAGE = "Added: Motion type migration McAcpAxCamAut* → McCamAut* for AS6 McAxis library (2026-02-03)";
 
 // Check if debug mode is enabled via query parameter
 const IS_DEBUG_MODE = new URLSearchParams(window.location.search).get('debug') === 'true';
@@ -1292,6 +1292,9 @@ class AS4Converter {
             // Auto-apply deprecated library function and constant replacements (AsMath→AsBrMath, AsString→AsBrStr)
             this.autoApplyDeprecatedLibraryReplacements();
             
+            // Auto-apply motion type replacements (McAcpAxCamAutParType→McCamAutParType, etc.)
+            this.autoApplyMotionTypeReplacements();
+            
             // Auto-apply OPC UA conversion (OpcUA → OpcUaCs, FileVersion 10, config files)
             this.autoApplyUadFileConversion();
             
@@ -1412,6 +1415,9 @@ class AS4Converter {
         
         // Check for deprecated library function calls (AsString, AsWStr, etc.)
         this.scanForDeprecatedFunctionCalls(path, content);
+        
+        // Check for deprecated motion types (McAcpAx* → Mc* for AS6)
+        this.scanForDeprecatedMotionTypes(path, content);
         
         // Check for function calls that match deprecated functions
         DeprecationDatabase.functions.forEach(func => {
@@ -1553,6 +1559,51 @@ class AS4Converter {
                                 automated: true
                             }
                         });
+                    }
+                });
+            }
+        });
+    }
+
+    /**
+     * Scan for deprecated motion types (McAcpAx* → Mc* for AS6 migration)
+     * These are type definitions used in variable declarations that need updating
+     * when migrating from ACOPOS-specific types to generic McAxis types.
+     */
+    scanForDeprecatedMotionTypes(path, content) {
+        // Get motion type mappings from the database
+        const typeMappings = DeprecationDatabase.as6Format?.motionTypeMappings;
+        if (!typeMappings || typeMappings.length === 0) {
+            return;
+        }
+        
+        typeMappings.forEach(mapping => {
+            // Create regex pattern to match type names as standalone identifiers
+            // Match patterns like: ": McAcpAxCamAutParType" or "OF McAcpAxCamAutParType"
+            const pattern = new RegExp(`\\b${this.escapeRegex(mapping.old)}\\b`, 'gi');
+            let match;
+            
+            while ((match = pattern.exec(content)) !== null) {
+                this.addFinding({
+                    type: 'deprecated_motion_type',
+                    name: mapping.old,
+                    severity: 'warning',
+                    description: `Deprecated motion type: ${mapping.old} → ${mapping.new}`,
+                    replacement: { 
+                        name: mapping.new, 
+                        description: mapping.notes 
+                    },
+                    notes: `McAcpAx type ${mapping.old} is replaced by ${mapping.new} in AS6 McAxis library. This is part of the ACP10_MC to mapp Axis migration.`,
+                    file: path,
+                    line: this.getLineNumber(content, match.index),
+                    context: this.getCodeContext(content, match.index),
+                    original: match[0],
+                    autoReplace: true,
+                    conversion: {
+                        type: 'motion_type',
+                        from: mapping.old,
+                        to: mapping.new,
+                        automated: true
                     }
                 });
             }
@@ -2772,6 +2823,67 @@ class AS4Converter {
         });
         
         console.log('Deprecated library replacements completed');
+    }
+
+    /**
+     * Auto-apply motion type replacements for AS4 McAcpAx → AS6 McAxis migration
+     * Replaces ACOPOS-specific types (McAcpAx*) with generic McAxis types (Mc*)
+     * Reference: AS6 Help - "Migrating from ACP10_MC to mapp Axis"
+     */
+    autoApplyMotionTypeReplacements() {
+        console.log('Auto-applying motion type replacements (McAcpAx* → Mc*)...');
+        
+        // Get motion type mappings from the database
+        const typeMappings = DeprecationDatabase.as6Format?.motionTypeMappings;
+        if (!typeMappings || typeMappings.length === 0) {
+            console.log('No motion type mappings found');
+            return;
+        }
+        
+        console.log(`Found ${typeMappings.length} motion type mappings to process`);
+        
+        // Process each source file
+        this.projectFiles.forEach((file, filePath) => {
+            // Skip binary files
+            if (file.isBinary) return;
+            
+            // Only process IEC 61131-3 Structured Text source files
+            // Note: Type definitions appear in .typ, .var, .st, .fun, .prg files
+            const ext = filePath.toLowerCase().split('.').pop();
+            if (!['st', 'var', 'typ', 'fun', 'prg'].includes(ext)) return;
+            
+            let content = file.content;
+            let modified = false;
+            let replacementCount = 0;
+            
+            typeMappings.forEach(mapping => {
+                const escapedOld = mapping.old.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const pattern = new RegExp(`\\b${escapedOld}\\b`, 'g');
+                
+                if (pattern.test(content)) {
+                    content = content.replace(pattern, mapping.new);
+                    modified = true;
+                    replacementCount++;
+                    console.log(`Replaced ${mapping.old} → ${mapping.new} in ${filePath}`);
+                }
+            });
+            
+            if (modified) {
+                file.content = content;
+                console.log(`Applied ${replacementCount} motion type replacements in ${filePath}`);
+            }
+        });
+        
+        // Mark motion type findings as applied
+        this.analysisResults.forEach(finding => {
+            if (finding.type === 'deprecated_motion_type' && finding.autoReplace && finding.status !== 'applied') {
+                finding.status = 'applied';
+                finding.autoFixed = true;
+                finding.notes = (finding.notes || '') + ' [Auto-applied]';
+            }
+        });
+        
+        console.log('Motion type replacements completed');
     }
 
     /**
@@ -5635,6 +5747,7 @@ ${mappingGroups}
             function_block: '🧩',
             deprecated_function_call: '🔄',
             deprecated_constant: '🔢',
+            deprecated_motion_type: '🔀',
             deprecated_function_block: '🚫',
             hardware: '🔌',
             project: '📁',
@@ -5658,6 +5771,7 @@ ${mappingGroups}
             function_block: 'Function Blocks',
             deprecated_function_call: 'Deprecated Function Calls',
             deprecated_constant: 'Deprecated Constants',
+            deprecated_motion_type: 'Deprecated Motion Types',
             deprecated_function_block: 'Removed Function Blocks',
             hardware: 'Hardware Modules',
             project: 'Project Format',
@@ -5883,6 +5997,13 @@ ${mappingGroups}
             const escapedOld = oldConst.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             after = before.replace(new RegExp(`\\b${escapedOld}\\b`, 'gi'), newConst);
             notes = finding.notes || `Replace ${oldConst} with ${newConst}`;
+        } else if (finding.type === 'deprecated_motion_type' && finding.conversion) {
+            // Deprecated motion type replacement (e.g., McAcpAxCamAutParType → McCamAutParType)
+            const oldType = finding.conversion.from;
+            const newType = finding.conversion.to;
+            const escapedOld = oldType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            after = before.replace(new RegExp(`\\b${escapedOld}\\b`, 'gi'), newType);
+            notes = finding.notes || `Replace ${oldType} with ${newType}`;
         } else if (finding.type === 'hardware' && finding.replacement) {
             // Replace hardware reference
             after = before.replace(finding.name, finding.replacement.name);
@@ -6111,6 +6232,19 @@ ${mappingGroups}
             // Track constant replacements for reporting
             this.constantReplacements = this.constantReplacements || new Map();
             this.constantReplacements.set(oldConst, newConst);
+        } else if (finding.type === 'deprecated_motion_type' && finding.conversion && finding.autoReplace) {
+            // Deprecated motion type replacement (McAcpAx* → Mc* types)
+            const oldType = finding.conversion.from;
+            const newType = finding.conversion.to;
+            
+            // Replace type: use word boundary to match standalone identifiers
+            const escapedOld = oldType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const pattern = new RegExp(`\\b${escapedOld}\\b`, 'g');
+            convertedContent = originalContent.replace(pattern, newType);
+            
+            // Track type replacements for reporting
+            this.motionTypeReplacements = this.motionTypeReplacements || new Map();
+            this.motionTypeReplacements.set(oldType, newType);
         } else if (finding.type === 'library' && finding.autoReplace && finding.replacement) {
             // Library reference replacement (e.g., AsString → AsBrStr in LIBRARY declarations)
             const oldLib = finding.name;
