@@ -82,6 +82,18 @@ const DeprecationDatabase = {
                 newInAS6: true
                 // Note: MpAlarmX, MpBase, etc. are libraries, not subVersions
             },
+            'mappMotion': { 
+                as4Version: '5.24.1', 
+                as6Version: '6.0.0', 
+                required: false
+                // Note: MpAxis, MpCnc, MpRobotics, McAcpAx, McAxis, McBase are libraries, not subVersions
+            },
+            'mappControl': { 
+                as4Version: '5.24.1', 
+                as6Version: '6.1.0', 
+                required: false
+                // Note: MpTemp, MpHydAxis, MpPump, MTBasics, MTFilter, etc. are libraries, not subVersions
+            },
             'mappSafety': { 
                 as4Version: '5.24.1', 
                 as6Version: '6.2.0', 
@@ -263,6 +275,78 @@ const DeprecationDatabase = {
             '.ncc': { name: 'NC Configuration', language: null },
             '.dob': { name: 'Data Object', language: 'Ax' }
         },
+        
+        // Motion type mappings for AS4 McAcpAx → AS6 McAxis migration
+        // In AS6, ACOPOS-specific types (McAcpAx*) are replaced with generic McAxis types (Mc*)
+        // Reference: AS6 Help - "Migrating from ACP10_MC to mapp Axis"
+        motionTypeMappings: [
+            // Main cam automat parameter types
+            { old: 'McAcpAxCamAutParType', new: 'McCamAutParType', notes: 'Main cam automat parameter structure' },
+            { old: 'McAcpAxCamAutCommonParType', new: 'McCamAutCommonParType', notes: 'Common parameters for all states' },
+            { old: 'McAcpAxCamAutStateParType', new: 'McCamAutStateParType', notes: 'State-specific parameters' },
+            { old: 'McAcpAxCamAutMasterParType', new: 'McCamAutMasterParType', notes: 'Master axis parameters' },
+            { old: 'McAcpAxCamAutAdvParType', new: 'McCamAutAdvParType', notes: 'Advanced parameters' },
+            { old: 'McAcpAxCamAutDefineType', new: 'McCamAutDefineType', notes: 'Cam automat definition' },
+            
+            // Cam automat state sub-types
+            { old: 'McAcpAxCamAutEventParType', new: 'McCamAutEventParType', notes: 'Event parameters' },
+            { old: 'McAcpAxCamAutCompParType', new: 'McCamAutCompParType', notes: 'Compensation parameters' },
+            { old: 'McAcpAxCamAutAdvStateParType', new: 'McCamAutAdvStateParType', notes: 'Advanced state parameters' },
+            
+            // Common parameters sub-types
+            { old: 'McAcpAxCamAutCtrlSettingsType', new: 'McCamAutCtrlSettingsType', notes: 'Control settings' },
+            { old: 'McAcpAxCamAutMsgSettingsType', new: 'McCamAutMsgSettingsType', notes: 'Message settings' },
+            { old: 'McAcpAxCamAutTriggerAndLatchType', new: 'McCamAutTriggerAndLatchType', notes: 'Trigger and latch settings' },
+            { old: 'McAcpAxCamAutStartStateParType', new: 'McCamAutStartStateParType', notes: 'Start state parameters' },
+            { old: 'McAcpAxCamAutAddAxesType', new: 'McCamAutAddAxesType', notes: 'Additional axes configuration' },
+            { old: 'McAcpAxCamAutCommonFactorsType', new: 'McCamAutCommonFactorsType', notes: 'Common factors' },
+            
+            // Additional ACOPOS-specific types that may need mapping
+            { old: 'McAcpAxAdvCamAutSetParType', new: 'McAdvCamAutSetParType', notes: 'Advanced cam automat set parameters' }
+        ],
+        
+        // Enum value mappings for AS4 → AS6 migration
+        // Some enum values were renamed in AS6 libraries
+        enumMappings: [
+            // MpFileManagerUISortOrderEnum changes in MpFile library
+            // AS4: mpFILE_SORT_BY_* → AS6: mpFILE_UI_SORT_BY_*
+            { old: 'mpFILE_SORT_BY_NAME_ASC', new: 'mpFILE_UI_SORT_BY_NAME_ASC', library: 'MpFile', notes: 'Sort by name ascending' },
+            { old: 'mpFILE_SORT_BY_NAME_DESC', new: 'mpFILE_UI_SORT_BY_NAME_DESC', library: 'MpFile', notes: 'Sort by name descending' },
+            { old: 'mpFILE_SORT_BY_SIZE_ASC', new: 'mpFILE_UI_SORT_BY_SIZE_ASC', library: 'MpFile', notes: 'Sort by size ascending' },
+            { old: 'mpFILE_SORT_BY_SIZE_DES', new: 'mpFILE_UI_SORT_BY_SIZE_DES', library: 'MpFile', notes: 'Sort by size descending' },
+            { old: 'mpFILE_SORT_BY_MOD_TIME_ASC', new: 'mpFILE_UI_SORT_BY_MOD_TIME_ASC', library: 'MpFile', notes: 'Sort by modified time ascending' },
+            { old: 'mpFILE_SORT_BY_MOD_TIME_DESC', new: 'mpFILE_UI_SORT_BY_MOD_TIME_DESC', library: 'MpFile', notes: 'Sort by modified time descending' }
+        ],
+        
+        // Struct/FB member mappings for AS4 → AS6 migration
+        // Some struct/function block members were renamed in AS6 libraries
+        // Pattern-based: matches variableName.OldMember where variableName contains the FB type name
+        memberMappings: [
+            // MpReportCore - .Name was renamed to .FileName in AS6
+            // Pattern matches: MpReportCore*.Name (e.g., MpReportCore_0.Name, MpReportCore_Main.Name)
+            { 
+                structType: 'MpReportCore', 
+                old: 'Name', 
+                new: 'FileName', 
+                library: 'MpReport', 
+                // Pattern: MpReportCore followed by any word chars, then .Name
+                pattern: '(MpReportCore\\w*)\\.Name\\b',
+                replacement: '$1.FileName',
+                notes: 'Member renamed from Name to FileName' 
+            },
+            // MpAxisBasic - .Info.DigitalInputsStatus moved to .Info.AxisAdditionalInfo.DigitalInputStatus
+            // Pattern matches any variable ending with .Info.DigitalInputsStatus
+            { 
+                structType: 'MpAxisBasic', 
+                old: '.Info.DigitalInputsStatus', 
+                new: '.Info.AxisAdditionalInfo.DigitalInputStatus', 
+                library: 'MpAxis', 
+                // Pattern: match .Info.DigitalInputsStatus regardless of variable name
+                pattern: '\\.Info\\.DigitalInputsStatus\\b',
+                replacement: '.Info.AxisAdditionalInfo.DigitalInputStatus',
+                notes: 'Member path changed: .Info.DigitalInputsStatus → .Info.AxisAdditionalInfo.DigitalInputStatus' 
+            }
+        ],
         
         // Library to Technology Package mapping for AS6 upgrades
         // Maps AS4 5.x libraries to their AS6 6.x equivalents
@@ -671,6 +755,28 @@ const DeprecationDatabase = {
             notes: "This function block must be manually reimplemented. Instances will be removed from .var/.typ files and usages will be commented out in source files for manual review.",
             removedIn: "AS6.0",
             autoRemove: true
+        }
+    ],
+
+    // ==========================================
+    // DEPRECATED STRUCT MEMBERS (removed in AS6)
+    // ==========================================
+    // These are struct members that existed in AS4 but were removed in AS6.
+    // Code accessing these members will cause compile errors and must be commented out.
+    deprecatedStructMembers: [
+        {
+            id: "member_mccamautdefinetype_datasize",
+            structType: "McCamAutDefineType",
+            memberName: "DataSize",
+            // Pattern matches: variable.Data.DataSize or variable.DataSize (for direct struct access)
+            // Also matches assignment patterns
+            pattern: "\\.Data\\.DataSize\\b|\\.DataSize\\b",
+            severity: "warning",
+            description: "McCamAutDefineType.DataSize member removed in AS6",
+            notes: "The DataSize member was removed from McCamAutDefineType in AS6. Lines using this member must be commented out or removed.",
+            removedIn: "AS6.0",
+            autoComment: true,
+            todoMessage: "McCamAutDefineType.DataSize removed in AS6 - remove or rework this line"
         }
     ],
 

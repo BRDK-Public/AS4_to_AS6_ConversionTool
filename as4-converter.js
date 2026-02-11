@@ -3,6 +3,13 @@
  * Main application logic for analyzing and converting B&R Automation Studio projects
  */
 
+// Debug version - UPDATE THIS AFTER EVERY CHANGE
+const DEBUG_VERSION = "1.1.9";
+const DEBUG_MESSAGE = "Fixed DTM file filtering & path handling";
+
+// Check if debug mode is enabled via query parameter
+const IS_DEBUG_MODE = new URLSearchParams(window.location.search).get('debug') === 'true';
+
 class AS4Converter {
     constructor() {
         this.projectFiles = new Map(); // filename -> { content, type, path }
@@ -15,8 +22,20 @@ class AS4Converter {
         this.isAS6Project = false; // Flag if AS6 project is detected
         
         this.initializeUI();
+        if (IS_DEBUG_MODE) {
+            this.displayDebugVersion();
+        }
         this.bindEvents();
         this.checkBrowserCompatibility();
+    }
+    
+    displayDebugVersion() {
+        const versionEl = document.getElementById('debugVersion');
+        if (versionEl) {
+            versionEl.textContent = `🐛 DEBUG v${DEBUG_VERSION} - ${DEBUG_MESSAGE}`;
+            versionEl.style.cssText = 'font-size: 11px; color: #ff6b6b; margin-top: 4px; font-weight: bold; display: block;';
+        }
+        console.log(`🐛 AS4 to AS6 Converter DEBUG MODE v${DEBUG_VERSION} - ${DEBUG_MESSAGE}`);
     }
     
     detectEdge() {
@@ -325,116 +344,11 @@ class AS4Converter {
             await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         }
         
-        // All supported B&R Automation Studio file extensions
-        const relevantExtensions = [
-            // Code files
-            '.st', '.fun', '.typ', '.var', '.prg', '.svar',
-            // Hardware and config
-            '.hw', '.hwl', '.sw', '.per',
-            // Project and package
-            '.xml', '.pkg', '.apj',
-            // Motion/Axis
-            '.ax', '.apt', '.ncm', '.ncc', '.dob', '.vax',
-            // mappView binding lists
-            '.bindinglist',
-            // mappView expressions
-            '.expression', '.expressiontype',
-            // Localization
-            '.tmx', '.textconfig', '.units',
-            // I/O and mapping
-            '.iom', '.vvm',
-            // Libraries
-            '.lby', '.br',
-            // Library binary files (for user libraries that need their compiled binaries)
-            '.a', '.o',
-            // ANSI C source files (critical for custom libraries)
-            '.c', '.h',
-            // mappView / Visualization
-            '.content', '.eventbinding', '.binding', '.action',
-            '.page', '.layout', '.dialog', '.theme', '.styles',
-            '.vis', '.mappviewcfg', '.widgetlibrary', '.snippet',
-            // mappView custom widgets and keyboards
-            '.numpad', '.compoundwidget', '.stylesset',
-            // OPC UA
-            '.uaserver', '.uad', '.uacfg', '.uadcfg',
-            // mapp components
-            '.mpalarmxcore', '.mpalarmxhistory', '.mprecipexml', '.mprecipecsv', '.mpdatarecorder',
-            '.mpalarmxlist', '.mpalarmxcategory', '.mpalarmxquery',
-            '.mpcomgroup', '.mpfilemanagerui',
-            '.mpwebxs', '.mpreportcore', '.mpaudittrail',  // mappServices additional components
-            // mappVision
-            '.visionapplication', '.visioncomponent', '.vicfg',
-            // VC (Visual Components / Keyboards)
-            '.dis',
-            // Security and access
-            '.role', '.user', '.firewallrules',
-            // DTM / Device configuration
-            '.dtm', '.dtmdre', '.dtmtre', '.dtmdri',
-            // Motion/Data objects
-            '.ett',
-            // Language/Localization
-            '.language',
-            // Safety
-            '.sfapp', '.swt',
-            // Media/assets
-            '.jpg', '.svg', '.png', '.gif', '.bmp', '.ico',
-            // Build scripts
-            '.ps1', '.bat', '.cmd',
-            // Git/config
-            '.gitignore',
-            // Licenses and docs
-            '.md', '.doc', '.txt',
-            // Documents folder files (must be copied unchanged)
-            '.pdf', '.chm', '.hlp',                              // Documentation/help files
-            '.docx', '.xls', '.xlsx', '.xlsm', '.ppt', '.pptx',  // Office documents
-            '.scn',                                               // Scene files
-            '.stl', '.obj', '.step', '.stp', '.iges', '.igs',    // 3D model files
-            '.xdd', '.eds', '.gsd', '.gsdml',                    // Device description files
-            '.exe', '.dll',                                       // Executables
-            '.zip', '.rar', '.7z',                               // Archives
-            '.bin', '.dat',                                       // Binary data files
-            '.csv', '.json',                                      // Data files
-            // Alarm/Text configuration
-            '.alcfg', '.algrp', '.txtgrp',
-            // Bus Navigator
-            '.bnc', '.bns', '.set', '.sxostd', '.xostd',
-            // Safety Designer files (text-based)
-            '.cic', '.ciw', '.dip', '.dit', '.diw', '.gs', '.il', '.ioc', '.lci', '.ldi', '.off', '.pou', '.tdi', '.proj', '.plcproj',
-            // Data source/version
-            '.dso', '.cvinfo',
-            // Extension/config files
-            '.ext', '.cfg', '.inf', '.ini', '.dir',
-            // Additional text files
-            '.lst', '.mev', '.mrk', '.rej', '.resolve', '.txc', '.vcr', '.vcug', '.wwv',
-            // Web/script files
-            '.html', '.js', '.vbs', '.url',
-            // Graph files
-            '.graphml',
-            // Visual Components
-            '.vcp',
-            // Safety binary files (need to be copied as-is)
-            '.saf', '.sos', '.sim', '.st1', '.sto', '.pr2',
-            // Cross-reference files
-            '.crcl', '.ibs', '.lov', '.wwd',
-            // Source control
-            '.scc',
-            // Help cache
-            '.chw'
-        ];
-        // Folders to exclude (temp/build artifacts)
-        const excludedFolders = ['Temp', 'Binaries', 'Diagnosis'];
-        
+        // Filter files using path-based approach instead of extension whitelist
+        // This includes all files from Logical/ and Physical/ folders, plus .apj files
         const relevantFiles = files.filter(file => {
             const filePath = file.relativePath || file.webkitRelativePath || file.name;
-            const pathParts = filePath.split(/[/\\]/);
-            
-            // Exclude files in temp/build folders
-            if (pathParts.some(part => excludedFolders.includes(part))) {
-                return false;
-            }
-            
-            const ext = this.getFileExtension(file.name);
-            return relevantExtensions.includes(ext);
+            return this.shouldIncludeFile(filePath);
         });
         
         // Debug: Log filtered binary files
@@ -449,6 +363,7 @@ class AS4Converter {
         const totalFiles = relevantFiles.length;
         if (progressDialog) {
             progressMessage.textContent = `Loading ${totalFiles} project files...`;
+            progressDetails.textContent = `Filtered from ${files.length} total files (Logical/ + Physical/ + .apj)`;
             // Yield to let browser paint updated message
             await new Promise(resolve => requestAnimationFrame(resolve));
         }
@@ -682,76 +597,16 @@ class AS4Converter {
     async processExtractedFiles(files, progressDialog, progressBar, progressPercent, progressMessage, progressDetails) {
         this.projectFiles.clear();
 
-        // All supported B&R Automation Studio file extensions (same filter as processFiles)
-        const relevantExtensions = [
-            '.st', '.fun', '.typ', '.var', '.prg', '.svar',
-            '.hw', '.hwl', '.sw', '.per',
-            '.xml', '.pkg', '.apj',
-            '.ax', '.apt', '.ncm', '.ncc', '.dob', '.vax',
-            '.bindinglist', '.expression', '.expressiontype',
-            '.tmx', '.textconfig', '.units',
-            '.iom', '.vvm',
-            '.lby', '.br', '.a', '.o',
-            '.c', '.h',
-            '.content', '.eventbinding', '.binding', '.action',
-            '.page', '.layout', '.dialog', '.theme', '.styles',
-            '.vis', '.mappviewcfg', '.widgetlibrary', '.snippet',
-            '.numpad', '.compoundwidget', '.stylesset',
-            '.uaserver', '.uad', '.uacfg', '.uadcfg',
-            '.mpalarmxcore', '.mpalarmxhistory', '.mprecipexml', '.mprecipecsv', '.mpdatarecorder',
-            '.mpalarmxlist', '.mpalarmxcategory', '.mpalarmxquery',
-            '.mpcomgroup', '.mpfilemanagerui',
-            '.mpwebxs', '.mpreportcore', '.mpaudittrail',
-            '.visionapplication', '.visioncomponent', '.vicfg',
-            '.dis', '.role', '.user', '.firewallrules',
-            '.dtm', '.dtmdre', '.dtmtre', '.dtmdri',
-            '.ett', '.language', '.sfapp', '.swt',
-            '.jpg', '.svg', '.png', '.gif', '.bmp', '.ico',
-            '.ps1', '.bat', '.cmd', '.gitignore',
-            '.md', '.doc', '.txt',
-            '.pdf', '.chm', '.hlp', '.chw',
-            '.docx', '.xls', '.xlsx', '.xlsm', '.ppt', '.pptx',
-            '.scn', '.stl', '.obj', '.step', '.stp', '.iges', '.igs',
-            '.xdd', '.eds', '.gsd', '.gsdml',
-            '.exe', '.dll', '.zip', '.rar', '.7z',
-            '.bin', '.dat', '.csv', '.json',
-            // Alarm/Text configuration
-            '.alcfg', '.algrp', '.txtgrp',
-            // Bus Navigator
-            '.bnc', '.bns', '.set', '.sxostd', '.xostd',
-            // Safety Designer files
-            '.cic', '.ciw', '.dip', '.dit', '.diw', '.gs', '.il', '.ioc', '.lci', '.ldi', '.off', '.pou', '.tdi', '.proj', '.plcproj',
-            '.saf', '.sos', '.sim', '.st1', '.sto', '.pr2',
-            // Data source/version
-            '.dso', '.cvinfo',
-            // Extension/config files
-            '.ext', '.cfg', '.inf', '.ini', '.dir',
-            // Additional files
-            '.lst', '.mev', '.mrk', '.rej', '.resolve', '.txc', '.vcr', '.vcug', '.wwv',
-            '.crcl', '.ibs', '.lov', '.wwd', '.scc',
-            // Web/script files
-            '.html', '.js', '.vbs', '.url',
-            // Graph/Visual
-            '.graphml', '.vcp'
-        ];
-
-        const excludedFolders = ['Temp', 'Binaries', 'Diagnosis'];
-
+        // Filter files using path-based approach instead of extension whitelist
+        // This includes all files from Logical/ and Physical/ folders, plus .apj files
         const relevantFiles = files.filter(file => {
             const filePath = file.relativePath || file.webkitRelativePath || file.name;
-            const pathParts = filePath.split(/[/\\]/);
-            
-            if (pathParts.some(part => excludedFolders.includes(part))) {
-                return false;
-            }
-            
-            const ext = this.getFileExtension(file.name);
-            return relevantExtensions.includes(ext);
+            return this.shouldIncludeFile(filePath);
         });
 
         if (progressDialog) {
             progressMessage.textContent = `Loading ${relevantFiles.length} project files...`;
-            progressDetails.textContent = `Filtered from ${files.length} total files`;
+            progressDetails.textContent = `Filtered from ${files.length} total files (Logical/ + Physical/ + .apj)`;
             await new Promise(resolve => requestAnimationFrame(resolve));
         }
 
@@ -834,114 +689,17 @@ class AS4Converter {
                 await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
             }
             
-            // All supported B&R Automation Studio file extensions
-            const relevantExtensions = [
-                // Code files
-                '.st', '.fun', '.typ', '.var', '.prg', '.svar',
-                // Hardware and config
-                '.hw', '.hwl', '.sw', '.per',
-                // Project and package
-                '.xml', '.pkg', '.apj',
-                // Motion/Axis
-                '.ax', '.apt', '.ncm', '.ncc', '.dob', '.vax',
-                // mappView binding lists
-                '.bindinglist',
-                // mappView expressions
-                '.expression', '.expressiontype',
-                // Localization
-                '.tmx', '.textconfig', '.units',
-                // I/O and mapping
-                '.iom', '.vvm',
-                // Libraries
-                '.lby', '.br',
-                // Library binary files (for user libraries that need their compiled binaries)
-                '.a', '.o',
-                // ANSI C source files (critical for custom libraries)
-                '.c', '.h',
-                // mappView / Visualization
-                '.content', '.eventbinding', '.binding', '.action',
-                '.page', '.layout', '.dialog', '.theme', '.styles',
-                '.vis', '.mappviewcfg', '.widgetlibrary', '.snippet',
-                // mappView custom widgets and keyboards
-                '.numpad', '.compoundwidget', '.stylesset',
-                // OPC UA
-                '.uaserver', '.uad', '.uacfg', '.uadcfg',
-                // mapp components
-                '.mpalarmxcore', '.mpalarmxhistory', '.mprecipexml', '.mprecipecsv', '.mpdatarecorder',
-                '.mpalarmxlist', '.mpalarmxcategory', '.mpalarmxquery',
-                '.mpcomgroup', '.mpfilemanagerui',
-                '.mpwebxs', '.mpreportcore', '.mpaudittrail',
-                // mappVision
-                '.visionapplication', '.visioncomponent', '.vicfg',
-                // VC keyboards
-                '.dis',
-                // Security and access
-                '.role', '.user', '.firewallrules',
-                // DTM / Device configuration
-                '.dtm', '.dtmdre', '.dtmtre', '.dtmdri',
-                // Motion/Data objects
-                '.ett',
-                // Language/Localization
-                '.language',
-                // Safety (text-based)
-                '.sfapp',
-                // Safety binary files
-                '.swt', '.saf', '.sos', '.sim', '.st1', '.sto', '.pr2',
-                // Media/assets
-                '.jpg', '.svg', '.png', '.gif', '.bmp', '.ico',
-                // Build scripts
-                '.ps1', '.bat', '.cmd',
-                // Git/config
-                '.gitignore',
-                // Licenses and docs
-                '.md', '.doc', '.txt',
-                // Documents folder files
-                '.pdf', '.chm', '.hlp', '.chw',
-                '.docx', '.xls', '.xlsx', '.xlsm', '.ppt', '.pptx',
-                '.scn', '.stl', '.obj', '.step', '.stp', '.iges', '.igs',
-                '.xdd', '.eds', '.gsd', '.gsdml',
-                '.exe', '.dll', '.zip', '.rar', '.7z',
-                '.bin', '.dat', '.csv', '.json',
-                // Alarm/Text configuration
-                '.alcfg', '.algrp', '.txtgrp',
-                // Bus Navigator
-                '.bnc', '.bns', '.set', '.sxostd', '.xostd',
-                // Safety Designer files (text-based)
-                '.cic', '.ciw', '.dip', '.dit', '.diw', '.gs', '.il', '.ioc', '.lci', '.ldi', '.off', '.pou', '.tdi', '.proj', '.plcproj',
-                // Data source/version
-                '.dso', '.cvinfo',
-                // Extension/config files
-                '.ext', '.cfg', '.inf', '.ini', '.dir',
-                // Additional files
-                '.lst', '.mev', '.mrk', '.rej', '.resolve', '.txc', '.vcr', '.vcug', '.wwv',
-                '.crcl', '.ibs', '.lov', '.wwd', '.scc',
-                // Web/script files
-                '.html', '.js', '.vbs', '.url',
-                // Graph/Visual
-                '.graphml', '.vcp'
-            ];
-            
-            // Folders to exclude (temp/build artifacts)
-            const excludedFolders = ['Temp', 'Binaries', 'Diagnosis'];
-            
-            // Filter relevant files first
+            // Filter files using path-based approach instead of extension whitelist
+            // This includes all files from Logical/ and Physical/ folders, plus .apj files
             const relevantFiles = files.filter(file => {
                 const filePath = file.relativePath || file.webkitRelativePath || file.name;
-                const pathParts = filePath.split(/[/\\]/);
-                
-                // Exclude files in temp/build folders
-                if (pathParts.some(part => excludedFolders.includes(part))) {
-                    return false;
-                }
-                
-                const ext = this.getFileExtension(file.name);
-                return relevantExtensions.includes(ext);
+                return this.shouldIncludeFile(filePath);
             });
             
             // Update progress after filtering
             if (progressDialog) {
                 progressMessage.textContent = `Loading ${relevantFiles.length} project files...`;
-                progressDetails.textContent = `Filtered from ${files.length} total files`;
+                progressDetails.textContent = `Filtered from ${files.length} total files (Logical/ + Physical/ + .apj)`;
                 // Yield to let browser paint updated message
                 await new Promise(resolve => requestAnimationFrame(resolve));
             }
@@ -1036,6 +794,8 @@ class AS4Converter {
         '.vax',
         // Safety project files
         '.saf', '.sos', '.sim', '.swt', '.st1', '.sto', '.pr2',
+        // DTM device configuration files (binary)
+        '.dtm', '.dtmdre', '.dtmdri', '.dtmtre',
         // Help cache
         '.chw',
         // Source control cache
@@ -1098,6 +858,60 @@ class AS4Converter {
                 reject(err);
             }
         });
+    }
+
+    /**
+     * Determines if a file should be included in the project based on its path.
+     * 
+     * Inclusion rules:
+     * - Files in Logical/ folder and all subfolders
+     * - Files in Physical/ folder and all subfolders
+     * - .apj files at the project root
+     * 
+     * Exclusion rules:
+     * - Temp/ folder and all contents
+     * - Binaries/ folder and all contents
+     * - Diagnosis/ folder and all contents
+     * 
+     * @param {string} filePath - The relative path of the file (e.g., "ProjectName/Logical/Package.pkg")
+     * @returns {boolean} - True if the file should be included, false otherwise
+     */
+    shouldIncludeFile(filePath) {
+        const pathParts = filePath.split(/[\/\\]/).filter(p => p.length > 0);
+        
+        if (pathParts.length === 0) {
+            return false;
+        }
+        
+        // Folders to EXCLUDE (system, build artifacts, caches)
+        const excludedFolders = [
+            'Temp', 'Binaries', 'Diagnosis',
+            '.git', '.svn', '.vscode', 'Backup', '__MACOSX'
+        ];
+        
+        // Check if ANY part of the path is an excluded folder (case-insensitive)
+        if (pathParts.some(part => 
+            excludedFolders.some(ef => ef.toLowerCase() === part.toLowerCase())
+        )) {
+            return false;
+        }
+        
+        // Get the filename (last part of the path)
+        const fileName = pathParts[pathParts.length - 1];
+        
+        // ALWAYS include .apj files (project file) regardless of location
+        if (fileName.toLowerCase().endsWith('.apj')) {
+            return true;
+        }
+        
+        // Include if file is within Logical/ or Physical/ folders
+        // Path format can be: "Logical/..." or "ProjectName/Logical/..."
+        const hasLogicalOrPhysical = pathParts.some((part) => {
+            const lowerPart = part.toLowerCase();
+            return lowerPart === 'logical' || lowerPart === 'physical';
+        });
+        
+        return hasLogicalOrPhysical;
     }
 
     getFileExtension(filename) {
@@ -1165,6 +979,7 @@ class AS4Converter {
             '.widgetlibrary': 'visualization',
             '.snippet': 'visualization',
             '.numpad': 'visualization',
+            '.alphapad': 'visualization',
             '.compoundwidget': 'visualization',
             '.stylesset': 'visualization',
             
@@ -1180,6 +995,10 @@ class AS4Converter {
             '.mprecipexml': 'mapp_component',
             '.mprecipecsv': 'mapp_component',
             '.mpdatarecorder': 'mapp_component',
+            
+            // mappCockpit
+            '.mcocfg': 'mapp_cockpit',
+            '.mcowebservercfg': 'mapp_cockpit',
             
             // Security and access
             '.role': 'security',
@@ -1482,6 +1301,9 @@ class AS4Converter {
             // Auto-apply deprecated library function and constant replacements (AsMath→AsBrMath, AsString→AsBrStr)
             this.autoApplyDeprecatedLibraryReplacements();
             
+            // Auto-apply motion type replacements (McAcpAxCamAutParType→McCamAutParType, etc.)
+            this.autoApplyMotionTypeReplacements();
+            
             // Auto-apply OPC UA conversion (OpcUA → OpcUaCs, FileVersion 10, config files)
             this.autoApplyUadFileConversion();
             
@@ -1494,7 +1316,11 @@ class AS4Converter {
             // Auto-remove deprecated function blocks (MpAlarmXAcknowledgeAll, etc.)
             this.autoApplyDeprecatedFunctionBlockRemoval();
             
+            // Auto-comment deprecated struct members (McCamAutDefineType.DataSize, etc.)
+            this.autoCommentDeprecatedStructMembers();
+            
             // Auto-remove SafetyRelease from .pkg files (not supported in AS6)
+            this.autoRemoveSafetyRelease();
             this.autoRemoveSafetyRelease();
             
             // Auto-update Visual Components firmware version in cpu.pkg files
@@ -1602,6 +1428,15 @@ class AS4Converter {
         
         // Check for deprecated library function calls (AsString, AsWStr, etc.)
         this.scanForDeprecatedFunctionCalls(path, content);
+        
+        // Check for deprecated motion types (McAcpAx* → Mc* for AS6)
+        this.scanForDeprecatedMotionTypes(path, content);
+        
+        // Check for deprecated enum values (AS4 → AS6 renames)
+        this.scanForDeprecatedEnumValues(path, content);
+        
+        // Check for deprecated struct/FB member names (AS4 → AS6 renames)
+        this.scanForDeprecatedMemberNames(path, content);
         
         // Check for function calls that match deprecated functions
         DeprecationDatabase.functions.forEach(func => {
@@ -1743,6 +1578,149 @@ class AS4Converter {
                                 automated: true
                             }
                         });
+                    }
+                });
+            }
+        });
+    }
+
+    /**
+     * Scan for deprecated motion types (McAcpAx* → Mc* for AS6 migration)
+     * These are type definitions used in variable declarations that need updating
+     * when migrating from ACOPOS-specific types to generic McAxis types.
+     */
+    scanForDeprecatedMotionTypes(path, content) {
+        // Get motion type mappings from the database
+        const typeMappings = DeprecationDatabase.as6Format?.motionTypeMappings;
+        if (!typeMappings || typeMappings.length === 0) {
+            return;
+        }
+        
+        typeMappings.forEach(mapping => {
+            // Create regex pattern to match type names as standalone identifiers
+            // Match patterns like: ": McAcpAxCamAutParType" or "OF McAcpAxCamAutParType"
+            const pattern = new RegExp(`\\b${this.escapeRegex(mapping.old)}\\b`, 'gi');
+            let match;
+            
+            while ((match = pattern.exec(content)) !== null) {
+                this.addFinding({
+                    type: 'deprecated_motion_type',
+                    name: mapping.old,
+                    severity: 'warning',
+                    description: `Deprecated motion type: ${mapping.old} → ${mapping.new}`,
+                    replacement: { 
+                        name: mapping.new, 
+                        description: mapping.notes 
+                    },
+                    notes: `McAcpAx type ${mapping.old} is replaced by ${mapping.new} in AS6 McAxis library. This is part of the ACP10_MC to mapp Axis migration.`,
+                    file: path,
+                    line: this.getLineNumber(content, match.index),
+                    context: this.getCodeContext(content, match.index),
+                    original: match[0],
+                    autoReplace: true,
+                    conversion: {
+                        type: 'motion_type',
+                        from: mapping.old,
+                        to: mapping.new,
+                        automated: true
+                    }
+                });
+            }
+        });
+    }
+
+    /**
+     * Scan for deprecated enum values (AS4 → AS6 migration)
+     * Some enum values were renamed in AS6 libraries
+     */
+    scanForDeprecatedEnumValues(path, content) {
+        // Get enum mappings from the database
+        const enumMappings = DeprecationDatabase.as6Format?.enumMappings;
+        if (!enumMappings || enumMappings.length === 0) {
+            return;
+        }
+        
+        enumMappings.forEach(mapping => {
+            // Create regex pattern to match enum values as standalone identifiers
+            const pattern = new RegExp(`\\b${this.escapeRegex(mapping.old)}\\b`, 'gi');
+            let match;
+            
+            while ((match = pattern.exec(content)) !== null) {
+                this.addFinding({
+                    type: 'deprecated_constant',
+                    name: mapping.old,
+                    severity: 'warning',
+                    description: `Deprecated enum value: ${mapping.old} → ${mapping.new}`,
+                    replacement: { 
+                        name: mapping.new, 
+                        description: mapping.notes 
+                    },
+                    notes: `Enum value ${mapping.old} is renamed to ${mapping.new} in AS6 ${mapping.library} library.`,
+                    file: path,
+                    line: this.getLineNumber(content, match.index),
+                    context: this.getCodeContext(content, match.index),
+                    original: match[0],
+                    autoReplace: true,
+                    parentLibrary: mapping.library,
+                    conversion: {
+                        type: 'constant',
+                        from: mapping.old,
+                        to: mapping.new,
+                        automated: true
+                    }
+                });
+            }
+        });
+    }
+
+    /**
+     * Scan for deprecated struct/FB member names (AS4 → AS6 migration)
+     * Some struct/function block members were renamed in AS6 libraries
+     * Uses pattern-based matching to only match variables that contain the FB type name
+     * e.g., MpReportCore_0.Name, MpReportCore_Main.Name → .FileName
+     */
+    scanForDeprecatedMemberNames(path, content) {
+        // Get member mappings from the database
+        const memberMappings = DeprecationDatabase.as6Format?.memberMappings;
+        if (!memberMappings || memberMappings.length === 0) {
+            return;
+        }
+        
+        memberMappings.forEach(mapping => {
+            // Use the pattern from the mapping (e.g., "(MpReportCore\\w*)\\.Name\\b")
+            // This ensures we only match variables that contain the FB type name
+            const pattern = new RegExp(mapping.pattern, 'gi');
+            let match;
+            
+            while ((match = pattern.exec(content)) !== null) {
+                // match[0] = full match (e.g., "MpReportCore_0.Name")
+                // match[1] = captured group (e.g., "MpReportCore_0")
+                const varName = match[1];
+                const fullMatch = match[0];
+                
+                this.addFinding({
+                    type: 'deprecated_member_rename',
+                    name: `${mapping.structType}.${mapping.old}`,
+                    severity: 'warning',
+                    description: `Member rename: ${varName}.${mapping.old} → ${varName}.${mapping.new}`,
+                    replacement: { 
+                        name: `${varName}.${mapping.new}`, 
+                        description: mapping.notes 
+                    },
+                    notes: `In AS6, ${mapping.structType}.${mapping.old} was renamed to ${mapping.structType}.${mapping.new}.`,
+                    file: path,
+                    line: this.getLineNumber(content, match.index),
+                    context: this.getCodeContext(content, match.index),
+                    original: fullMatch,
+                    autoReplace: true,
+                    parentLibrary: mapping.library,
+                    conversion: {
+                        type: 'member_rename',
+                        pattern: mapping.pattern,
+                        replacement: mapping.replacement,
+                        from: fullMatch,
+                        to: fullMatch.replace(new RegExp(mapping.pattern, 'i'), mapping.replacement),
+                        automated: true
                     }
                 });
             }
@@ -2651,9 +2629,10 @@ class AS4Converter {
                 return;
             }
             
-            // Only process source files (.st, .c, .cpp)
+            // Only process IEC 61131-3 Structured Text source files
+            // Note: Do NOT include .c, .cpp, .h files - the function mappings are for ST only
             const ext = filePath.toLowerCase().split('.').pop();
-            if (!['st', 'c', 'cpp', 'h'].includes(ext)) {
+            if (!['st', 'var', 'typ', 'fun', 'prg'].includes(ext)) {
                 return;
             }
             
@@ -2728,9 +2707,10 @@ class AS4Converter {
             // Skip binary files
             if (file.isBinary) return;
             
-            // Only process source files (.st, .c, .cpp, .h, .var, .typ)
+            // Only process IEC 61131-3 Structured Text source files
+            // Note: Do NOT include .c, .cpp, .h files - the function/constant mappings are for ST only
             const ext = filePath.toLowerCase().split('.').pop();
-            if (!['st', 'c', 'cpp', 'h', 'var', 'typ', 'fun'].includes(ext)) return;
+            if (!['st', 'var', 'typ', 'fun', 'prg'].includes(ext)) return;
             
             let content = file.content;
             let modified = false;
@@ -2853,19 +2833,20 @@ class AS4Converter {
                     
                     if (isPackagePkg) {
                         // For Package.pkg: <Object Type="Library">LibName</Object>
+                        // IMPORTANT: Only match Type="Library", not Type="Package" or Type="File"
                         // Check if replacement already exists to avoid duplicates
-                        const newLibPattern = new RegExp(`>\\s*${newLib}\\s*<\\/Object>`, 'i');
-                        const oldLibPattern = new RegExp(`>\\s*${oldLib}\\s*<\\/Object>`, 'i');
+                        const newLibPattern = new RegExp(`<Object\\s+Type="Library"[^>]*>\\s*${newLib}\\s*<\\/Object>`, 'i');
+                        const oldLibPattern = new RegExp(`<Object\\s+Type="Library"[^>]*>\\s*${oldLib}\\s*<\\/Object>`, 'i');
                         
                         if (oldLibPattern.test(content)) {
                             if (newLibPattern.test(content)) {
                                 // Replacement exists - remove old library entry
-                                const removePattern = new RegExp(`\\s*<Object[^>]*>\\s*${oldLib}\\s*<\\/Object>\\s*\\n?`, 'gi');
+                                const removePattern = new RegExp(`\\s*<Object\\s+Type="Library"[^>]*>\\s*${oldLib}\\s*<\\/Object>\\s*\\n?`, 'gi');
                                 content = content.replace(removePattern, '');
                                 console.log(`Removed duplicate library '${oldLib}' from ${filePath} (replacement '${newLib}' already exists)`);
                             } else {
                                 // Rename old library to new
-                                content = content.replace(oldLibPattern, `>${newLib}</Object>`);
+                                content = content.replace(oldLibPattern, `<Object Type="Library">${newLib}</Object>`);
                                 console.log(`Replaced library '${oldLib}' with '${newLib}' in ${filePath}`);
                             }
                             modified = true;
@@ -2922,10 +2903,11 @@ class AS4Converter {
                     
                     if (isPackagePkg) {
                         // For Package.pkg: <Object Type="Library">LibName</Object>
-                        const libPattern = new RegExp(`>\\s*${libName}\\s*<\\/Object>`, 'i');
+                        // IMPORTANT: Only match Type="Library", not Type="Package" or Type="File"
+                        const libPattern = new RegExp(`<Object\\s+Type="Library"[^>]*>\\s*${libName}\\s*<\\/Object>`, 'i');
                         
                         if (libPattern.test(content)) {
-                            const removePattern = new RegExp(`\\s*<Object[^>]*>\\s*${libName}\\s*<\\/Object>\\s*\\n?`, 'gi');
+                            const removePattern = new RegExp(`\\s*<Object\\s+Type="Library"[^>]*>\\s*${libName}\\s*<\\/Object>\\s*\\n?`, 'gi');
                             content = content.replace(removePattern, '');
                             console.log(`Removed deprecated library '${libName}' from ${filePath} (no AS6 replacement available)`);
                             modified = true;
@@ -2958,6 +2940,67 @@ class AS4Converter {
         });
         
         console.log('Deprecated library replacements completed');
+    }
+
+    /**
+     * Auto-apply motion type replacements for AS4 McAcpAx → AS6 McAxis migration
+     * Replaces ACOPOS-specific types (McAcpAx*) with generic McAxis types (Mc*)
+     * Reference: AS6 Help - "Migrating from ACP10_MC to mapp Axis"
+     */
+    autoApplyMotionTypeReplacements() {
+        console.log('Auto-applying motion type replacements (McAcpAx* → Mc*)...');
+        
+        // Get motion type mappings from the database
+        const typeMappings = DeprecationDatabase.as6Format?.motionTypeMappings;
+        if (!typeMappings || typeMappings.length === 0) {
+            console.log('No motion type mappings found');
+            return;
+        }
+        
+        console.log(`Found ${typeMappings.length} motion type mappings to process`);
+        
+        // Process each source file
+        this.projectFiles.forEach((file, filePath) => {
+            // Skip binary files
+            if (file.isBinary) return;
+            
+            // Only process IEC 61131-3 Structured Text source files
+            // Note: Type definitions appear in .typ, .var, .st, .fun, .prg files
+            const ext = filePath.toLowerCase().split('.').pop();
+            if (!['st', 'var', 'typ', 'fun', 'prg'].includes(ext)) return;
+            
+            let content = file.content;
+            let modified = false;
+            let replacementCount = 0;
+            
+            typeMappings.forEach(mapping => {
+                const escapedOld = mapping.old.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const pattern = new RegExp(`\\b${escapedOld}\\b`, 'g');
+                
+                if (pattern.test(content)) {
+                    content = content.replace(pattern, mapping.new);
+                    modified = true;
+                    replacementCount++;
+                    console.log(`Replaced ${mapping.old} → ${mapping.new} in ${filePath}`);
+                }
+            });
+            
+            if (modified) {
+                file.content = content;
+                console.log(`Applied ${replacementCount} motion type replacements in ${filePath}`);
+            }
+        });
+        
+        // Mark motion type findings as applied
+        this.analysisResults.forEach(finding => {
+            if (finding.type === 'deprecated_motion_type' && finding.autoReplace && finding.status !== 'applied') {
+                finding.status = 'applied';
+                finding.autoFixed = true;
+                finding.notes = (finding.notes || '') + ' [Auto-applied]';
+            }
+        });
+        
+        console.log('Motion type replacements completed');
     }
 
     /**
@@ -3557,56 +3600,62 @@ ${categoryElements.join('\n')}
 ${queryElements.join('\n')}
 </Configuration>`;
         
+        // Truncate base name to 8 characters to ensure generated file names don't exceed 10 chars
+        const truncatedBaseName = this.truncateBaseName(baseName, 8);
+        if (truncatedBaseName !== baseName) {
+            changes.push(`Truncated base name from '${baseName}' to '${truncatedBaseName}' for 10-char limit`);
+        }
+        
         // Delete the original file
         this.projectFiles.delete(originalPath);
         changes.push(`Removed original file: ${fileName}`);
         
         // Add new files
-        const newCorePath = folderPath + baseName + '_1.mpalarmxcore';
+        const newCorePath = folderPath + truncatedBaseName + '_1.mpalarmxcore';
         this.projectFiles.set(newCorePath, {
             content: newCoreContent,
             type: 'mapp_component',
-            name: baseName + '_1.mpalarmxcore',
+            name: truncatedBaseName + '_1.mpalarmxcore',
             extension: '.mpalarmxcore',
             isBinary: false
         });
-        changes.push(`Created ${baseName}_1.mpalarmxcore with ${elements.length} Element(s)`);
+        changes.push(`Created ${truncatedBaseName}_1.mpalarmxcore with ${elements.length} Element(s)`);
         
-        const newListPath = folderPath + baseName + '_L.mpalarmxlist';
+        const newListPath = folderPath + truncatedBaseName + '_L.mpalarmxlist';
         this.projectFiles.set(newListPath, {
             content: newListContent,
             type: 'mapp_component',
-            name: baseName + '_L.mpalarmxlist',
+            name: truncatedBaseName + '_L.mpalarmxlist',
             extension: '.mpalarmxlist',
             isBinary: false
         });
-        changes.push(`Created ${baseName}_L.mpalarmxlist with alarm definitions`);
+        changes.push(`Created ${truncatedBaseName}_L.mpalarmxlist with alarm definitions`);
         
-        const newCategoryPath = folderPath + baseName + '_C.mpalarmxcategory';
+        const newCategoryPath = folderPath + truncatedBaseName + '_C.mpalarmxcategory';
         this.projectFiles.set(newCategoryPath, {
             content: newCategoryContent,
             type: 'mapp_component',
-            name: baseName + '_C.mpalarmxcategory',
+            name: truncatedBaseName + '_C.mpalarmxcategory',
             extension: '.mpalarmxcategory',
             isBinary: false
         });
-        changes.push(`Created ${baseName}_C.mpalarmxcategory`);
+        changes.push(`Created ${truncatedBaseName}_C.mpalarmxcategory`);
         
-        const newQueryPath = folderPath + baseName + '_Q.mpalarmxquery';
+        const newQueryPath = folderPath + truncatedBaseName + '_Q.mpalarmxquery';
         this.projectFiles.set(newQueryPath, {
             content: newQueryContent,
             type: 'mapp_component',
-            name: baseName + '_Q.mpalarmxquery',
+            name: truncatedBaseName + '_Q.mpalarmxquery',
             extension: '.mpalarmxquery',
             isBinary: false
         });
-        changes.push(`Created ${baseName}_Q.mpalarmxquery`);
+        changes.push(`Created ${truncatedBaseName}_Q.mpalarmxquery`);
         
         // Handle history file conversion
-        this.convertMpAlarmXHistory(folderPath, baseName, changes);
+        this.convertMpAlarmXHistory(folderPath, truncatedBaseName, changes);
         
-        // Update Package.pkg
-        this.updatePackagePkgForAlarmX(folderPath, baseName, changes);
+        // Update Package.pkg (pass both original and truncated for proper removal/addition)
+        this.updatePackagePkgForAlarmX(folderPath, baseName, truncatedBaseName, changes);
         
         // Add to analysis results
         this.analysisResults.push({
@@ -3684,7 +3733,9 @@ ${queryElements.join('\n')}
         
         for (const historyInfo of historyFilesToConvert) {
             const { path: hPath, file: hFile, fileName: hFileName } = historyInfo;
-            const historyBaseName = hFileName.replace(/\.mpalarmxhistory$/i, '');
+            const historyBaseNameOriginal = hFileName.replace(/\.mpalarmxhistory$/i, '');
+            // Truncate history base name to 8 characters to ensure generated file names don't exceed 10 chars
+            const historyBaseName = this.truncateBaseName(historyBaseNameOriginal, 8);
             
             // Update history file content to AS6 format
             let historyContent = hFile.content;
@@ -3724,27 +3775,48 @@ ${queryElements.join('\n')}
     }
     
     /**
-     * Update Package.pkg with new AlarmX file entries
+     * Truncate a base name to ensure file names with suffixes don't exceed 10 characters.
+     * AS6 has a 10-character limit for certain file names.
+     * 
+     * @param {string} baseName - Original base name
+     * @param {number} maxLength - Maximum length for base name (default 8, to allow 2-char suffix)
+     * @returns {string} - Truncated base name
      */
-    updatePackagePkgForAlarmX(folderPath, baseName, changes) {
+    truncateBaseName(baseName, maxLength = 8) {
+        if (baseName.length <= maxLength) {
+            return baseName;
+        }
+        const truncated = baseName.substring(0, maxLength);
+        console.log(`  Truncated base name from '${baseName}' to '${truncated}' (10-char limit)`);
+        return truncated;
+    }
+    
+    /**
+     * Update Package.pkg with new AlarmX file entries
+     * @param {string} folderPath - Path to the folder containing Package.pkg
+     * @param {string} originalBaseName - Original base name (used for removing old entries)
+     * @param {string} truncatedBaseName - Truncated base name (used for new entries)
+     * @param {Array} changes - Array to log changes
+     */
+    updatePackagePkgForAlarmX(folderPath, originalBaseName, truncatedBaseName, changes) {
         const pkgPath = folderPath + 'Package.pkg';
         const pkgFile = this.projectFiles.get(pkgPath);
         
         if (pkgFile && typeof pkgFile.content === 'string') {
             let pkgContent = pkgFile.content;
             
-            // Remove old entry
+            // Remove old entry using original base name
             pkgContent = pkgContent.replace(
-                new RegExp(`<Object Type="File">${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.mpalarmxcore</Object>\\s*`, 'gi'), 
+                new RegExp(`<Object Type="File">${originalBaseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.mpalarmxcore</Object>\\s*`, 'gi'), 
                 ''
             );
             
-            // Add new entries before </Objects>
+            // Add new entries using truncated base name before </Objects>
             const newEntries = [
-                `<Object Type="File">${baseName}_1.mpalarmxcore</Object>`,
-                `<Object Type="File">${baseName}_C.mpalarmxcategory</Object>`,
-                `<Object Type="File">${baseName}_L.mpalarmxlist</Object>`,
-                `<Object Type="File">${baseName}_Q.mpalarmxquery</Object>`
+                `<Object Type="File">${truncatedBaseName}_1.mpalarmxcore</Object>`,
+                `<Object Type="File">${truncatedBaseName}_C.mpalarmxcategory</Object>`,
+                `<Object Type="File">${truncatedBaseName}_L.mpalarmxlist</Object>`,
+                `<Object Type="File">${truncatedBaseName}_Q.mpalarmxquery</Object>`
             ];
             
             // Check for existing entries to avoid duplicates
@@ -3813,50 +3885,56 @@ ${queryElements.join('\n')}
         // Create the query file content (_Q.mpalarmxquery)
         const newQueryContent = this.generateAS6QueryFile(elementId);
         
+        // Truncate base name to 8 characters to ensure generated file names don't exceed 10 chars
+        const truncatedBaseName = this.truncateBaseName(baseName, 8);
+        if (truncatedBaseName !== baseName) {
+            changes.push(`Truncated base name from '${baseName}' to '${truncatedBaseName}' for 10-char limit`);
+        }
+        
         // Delete the original file
         this.projectFiles.delete(originalPath);
         changes.push(`Removed original file: ${fileName}`);
         
         // Add new files
-        const newCorePath = folderPath + baseName + '_1.mpalarmxcore';
+        const newCorePath = folderPath + truncatedBaseName + '_1.mpalarmxcore';
         this.projectFiles.set(newCorePath, {
             content: newCoreContent,
             type: 'mapp_component',
-            name: baseName + '_1.mpalarmxcore',
+            name: truncatedBaseName + '_1.mpalarmxcore',
             extension: '.mpalarmxcore',
             isBinary: false
         });
-        changes.push(`Created ${baseName}_1.mpalarmxcore with Mapping format`);
+        changes.push(`Created ${truncatedBaseName}_1.mpalarmxcore with Mapping format`);
         
-        const newListPath = folderPath + baseName + '_L.mpalarmxlist';
+        const newListPath = folderPath + truncatedBaseName + '_L.mpalarmxlist';
         this.projectFiles.set(newListPath, {
             content: newListContent,
             type: 'mapp_component',
-            name: baseName + '_L.mpalarmxlist',
+            name: truncatedBaseName + '_L.mpalarmxlist',
             extension: '.mpalarmxlist',
             isBinary: false
         });
-        changes.push(`Created ${baseName}_L.mpalarmxlist with alarm definitions`);
+        changes.push(`Created ${truncatedBaseName}_L.mpalarmxlist with alarm definitions`);
         
-        const newCategoryPath = folderPath + baseName + '_C.mpalarmxcategory';
+        const newCategoryPath = folderPath + truncatedBaseName + '_C.mpalarmxcategory';
         this.projectFiles.set(newCategoryPath, {
             content: newCategoryContent,
             type: 'mapp_component',
-            name: baseName + '_C.mpalarmxcategory',
+            name: truncatedBaseName + '_C.mpalarmxcategory',
             extension: '.mpalarmxcategory',
             isBinary: false
         });
-        changes.push(`Created ${baseName}_C.mpalarmxcategory`);
+        changes.push(`Created ${truncatedBaseName}_C.mpalarmxcategory`);
         
-        const newQueryPath = folderPath + baseName + '_Q.mpalarmxquery';
+        const newQueryPath = folderPath + truncatedBaseName + '_Q.mpalarmxquery';
         this.projectFiles.set(newQueryPath, {
             content: newQueryContent,
             type: 'mapp_component',
-            name: baseName + '_Q.mpalarmxquery',
+            name: truncatedBaseName + '_Q.mpalarmxquery',
             extension: '.mpalarmxquery',
             isBinary: false
         });
-        changes.push(`Created ${baseName}_Q.mpalarmxquery`);
+        changes.push(`Created ${truncatedBaseName}_Q.mpalarmxquery`);
         
         // Handle history file renaming (e.g., CfgAlarmH.mpalarmxhistory -> CfgAlarm_2.mpalarmxhistory)
         // Look for a history file that matches the pattern {baseName}H.mpalarmxhistory
@@ -3866,7 +3944,7 @@ ${queryElements.join('\n')}
         this.projectFiles.forEach((hFile, hPath) => {
             if (historyFilePattern.test(hPath) && hPath.toLowerCase().startsWith(folderPath.toLowerCase())) {
                 // Rename the history file
-                const newHistoryPath = folderPath + baseName + '_2.mpalarmxhistory';
+                const newHistoryPath = folderPath + truncatedBaseName + '_2.mpalarmxhistory';
                 
                 // Update history file content to AS6 format
                 let historyContent = hFile.content;
@@ -3894,22 +3972,22 @@ ${queryElements.join('\n')}
                 this.projectFiles.set(newHistoryPath, {
                     content: historyContent,
                     type: 'mapp_component',
-                    name: baseName + '_2.mpalarmxhistory',
+                    name: truncatedBaseName + '_2.mpalarmxhistory',
                     extension: '.mpalarmxhistory',
                     isBinary: false
                 });
-                changes.push(`Renamed ${baseName}H.mpalarmxhistory to ${baseName}_2.mpalarmxhistory`);
+                changes.push(`Renamed ${baseName}H.mpalarmxhistory to ${truncatedBaseName}_2.mpalarmxhistory`);
                 
                 // Create the history query file
-                const historyQueryPath = folderPath + baseName + 'H_.mpalarmxquery';
+                const historyQueryPath = folderPath + truncatedBaseName + 'H_.mpalarmxquery';
                 this.projectFiles.set(historyQueryPath, {
                     content: this.generateAS6HistoryQueryFile(),
                     type: 'mapp_component',
-                    name: baseName + 'H_.mpalarmxquery',
+                    name: truncatedBaseName + 'H_.mpalarmxquery',
                     extension: '.mpalarmxquery',
                     isBinary: false
                 });
-                changes.push(`Created ${baseName}H_.mpalarmxquery`);
+                changes.push(`Created ${truncatedBaseName}H_.mpalarmxquery`);
                 
                 historyConverted = true;
             }
@@ -3921,23 +3999,23 @@ ${queryElements.join('\n')}
         if (pkgFile && typeof pkgFile.content === 'string') {
             let pkgContent = pkgFile.content;
             
-            // Remove old entries
+            // Remove old entries using original baseName
             pkgContent = pkgContent.replace(new RegExp(`<Object Type="File">${baseName}\\.mpalarmxcore</Object>\\s*`, 'gi'), '');
             if (historyConverted) {
                 pkgContent = pkgContent.replace(new RegExp(`<Object Type="File">${baseName}H\\.mpalarmxhistory</Object>\\s*`, 'gi'), '');
             }
             
-            // Add new entries before </Objects>
+            // Add new entries using truncatedBaseName before </Objects>
             const newEntries = [
-                `<Object Type="File">${baseName}_1.mpalarmxcore</Object>`,
-                `<Object Type="File">${baseName}_C.mpalarmxcategory</Object>`,
-                `<Object Type="File">${baseName}_L.mpalarmxlist</Object>`,
-                `<Object Type="File">${baseName}_Q.mpalarmxquery</Object>`
+                `<Object Type="File">${truncatedBaseName}_1.mpalarmxcore</Object>`,
+                `<Object Type="File">${truncatedBaseName}_C.mpalarmxcategory</Object>`,
+                `<Object Type="File">${truncatedBaseName}_L.mpalarmxlist</Object>`,
+                `<Object Type="File">${truncatedBaseName}_Q.mpalarmxquery</Object>`
             ];
             
             if (historyConverted) {
-                newEntries.push(`<Object Type="File">${baseName}_2.mpalarmxhistory</Object>`);
-                newEntries.push(`<Object Type="File">${baseName}H_.mpalarmxquery</Object>`);
+                newEntries.push(`<Object Type="File">${truncatedBaseName}_2.mpalarmxhistory</Object>`);
+                newEntries.push(`<Object Type="File">${truncatedBaseName}H_.mpalarmxquery</Object>`);
             }
             
             pkgContent = pkgContent.replace(
@@ -4459,6 +4537,83 @@ ${mappingGroups}
     }
 
     /**
+     * Auto-comment lines using deprecated struct members that were removed in AS6
+     * 
+     * This handles cases where struct members existed in AS4 but were removed in AS6:
+     * - McCamAutDefineType.DataSize (removed in AS6)
+     * 
+     * Lines accessing these members will cause compile errors in AS6 and must be commented out.
+     */
+    autoCommentDeprecatedStructMembers() {
+        console.log('Commenting deprecated struct member usages...');
+        
+        const deprecatedMembers = DeprecationDatabase.deprecatedStructMembers || [];
+        if (deprecatedMembers.length === 0) {
+            console.log('No deprecated struct members defined');
+            return;
+        }
+        
+        let commentedCount = 0;
+        
+        deprecatedMembers.forEach(member => {
+            if (!member.autoComment) return;
+            
+            const memberPattern = new RegExp(member.pattern, 'gi');
+            
+            this.projectFiles.forEach((file, filePath) => {
+                if (file.isBinary) return;
+                
+                // Only process ST source files
+                const ext = filePath.toLowerCase().split('.').pop();
+                if (!['st', 'fun', 'prg'].includes(ext)) return;
+                
+                let content = file.content;
+                const lines = content.split('\n');
+                let modified = false;
+                const newLines = [];
+                
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    
+                    // Check if line contains the deprecated member pattern
+                    if (memberPattern.test(line) && !line.trim().startsWith('//') && !line.trim().startsWith('(*')) {
+                        // Comment out the line with explanation
+                        const todoMsg = member.todoMessage || `${member.structType}.${member.memberName} removed in AS6`;
+                        newLines.push(`(* AS6-REMOVED: ${line} *) // TODO: ${todoMsg}`);
+                        modified = true;
+                        commentedCount++;
+                        console.log(`Commented deprecated member usage in ${filePath}: ${line.trim()}`);
+                        // Reset regex lastIndex for next iteration
+                        memberPattern.lastIndex = 0;
+                    } else {
+                        newLines.push(line);
+                        // Reset regex lastIndex for next iteration
+                        memberPattern.lastIndex = 0;
+                    }
+                }
+                
+                if (modified) {
+                    file.content = newLines.join('\n');
+                    
+                    this.analysisResults.push({
+                        type: 'deprecated_struct_member',
+                        severity: member.severity,
+                        category: 'struct_member',
+                        name: `${member.structType}.${member.memberName}`,
+                        description: member.description,
+                        file: filePath,
+                        autoFixed: true,
+                        notes: member.notes,
+                        details: [`Search for "AS6-REMOVED" or "TODO: ${member.todoMessage}" in the file`]
+                    });
+                }
+            });
+        });
+        
+        console.log(`Deprecated struct member comment complete: ${commentedCount} usages commented out`);
+    }
+
+    /**
      * Remove SafetyRelease attribute from .pkg files
      * SafetyRelease is not supported in AS6 and must be removed from cpu.pkg files
      */
@@ -4719,9 +4874,9 @@ ${mappingGroups}
             let modified = false;
             
             // Remove MpWebXs library reference: <Object Type="Library">MpWebXs</Object>
-            const libPattern = />\s*MpWebXs\s*<\/Object>/i;
+            const libPattern = /<Object\s+Type="Library"[^>]*>\s*MpWebXs\s*<\/Object>/i;
             if (libPattern.test(content)) {
-                const removePattern = /\s*<Object[^>]*>\s*MpWebXs\s*<\/Object>\s*\n?/gi;
+                const removePattern = /\s*<Object\s+Type="Library"[^>]*>\s*MpWebXs\s*<\/Object>\s*\n?/gi;
                 content = content.replace(removePattern, '');
                 console.log(`Removed MpWebXs library from ${filePath}`);
                 removedLibraryCount++;
@@ -4729,9 +4884,9 @@ ${mappingGroups}
             }
             
             // Remove .mpwebxs file references: <Object Type="File">*.mpwebxs</Object>
-            const configPattern = /\.mpwebxs\s*<\/Object>/i;
+            const configPattern = /<Object\s+Type="File"[^>]*>[^<]*\.mpwebxs\s*<\/Object>/i;
             if (configPattern.test(content)) {
-                const removeConfigPattern = /\s*<Object[^>]*>[^<]*\.mpwebxs\s*<\/Object>\s*\n?/gi;
+                const removeConfigPattern = /\s*<Object\s+Type="File"[^>]*>[^<]*\.mpwebxs\s*<\/Object>\s*\n?/gi;
                 content = content.replace(removeConfigPattern, '');
                 console.log(`Removed .mpwebxs file reference from ${filePath}`);
                 removedConfigCount++;
@@ -4857,6 +5012,279 @@ ${mappingGroups}
             }
         } catch (error) {
             console.error('Failed to fetch AS6 acp10sys.br:', error);
+        }
+    }
+
+    /**
+     * Add mCoWebSc.mcowebservercfg file to mappCockpit folders in Physical configurations.
+     * This file is required for AS6 mappCockpit web server configuration.
+     * 
+     * Project structure: ROOT/Physical/CONFIG/CPU/mappCockpit/
+     * We find mappCockpit folders by looking for existing mappCockpit/Package.pkg files.
+     */
+    async addMappCockpitWebServerConfig() {
+        // First check if mappCockpit is used in the project
+        const requiredPackages = this.getRequiredTechnologyPackages();
+        if (!requiredPackages.has('mappCockpit')) {
+            console.log('mappCockpit not used in project, skipping webserver config');
+            return;
+        }
+        
+        // Get the mappCockpit version
+        const mappCockpitVersion = requiredPackages.get('mappCockpit').version || '6.0.0';
+        console.log(`mappCockpit version: ${mappCockpitVersion}`);
+        
+        // Find mappCockpit folders by looking for mappCockpit/Package.pkg
+        const mappCockpitFolders = [];
+        this.projectFiles.forEach((file, path) => {
+            // Match: .../mappCockpit/Package.pkg
+            if (path.toLowerCase().endsWith('mappcockpit/package.pkg') || 
+                path.toLowerCase().endsWith('mappcockpit\\package.pkg')) {
+                const separator = path.includes('/') ? '/' : '\\';
+                const folderPath = path.substring(0, path.lastIndexOf(separator));
+                mappCockpitFolders.push({ path: folderPath, separator, packagePkg: path });
+            }
+        });
+        
+        if (mappCockpitFolders.length === 0) {
+            console.log('No mappCockpit folders found');
+            return;
+        }
+        
+        console.log(`Found ${mappCockpitFolders.length} mappCockpit folder(s)`);
+        
+        // Fetch the mCoWebSc.mcowebservercfg template file
+        const templatePath = `LibrariesForAS6/TechnologyPackages/mappCockpit/${mappCockpitVersion}/ObjectCatalog/Elements/mcowebservercfg/Template/mCoWebSc.mcowebservercfg`;
+        
+        try {
+            const response = await fetch(templatePath);
+            if (!response.ok) {
+                console.warn(`Could not fetch mCoWebSc.mcowebservercfg template: ${response.status}`);
+                return;
+            }
+            
+            const templateContent = await response.text();
+            
+            // Add the webserver config file to each mappCockpit folder
+            for (const { path: folderPath, separator, packagePkg } of mappCockpitFolders) {
+                const webServerConfigPath = folderPath + separator + 'mCoWebSc.mcowebservercfg';
+                
+                // Check if the file already exists
+                if (this.projectFiles.has(webServerConfigPath)) {
+                    console.log(`mCoWebSc.mcowebservercfg already exists in ${folderPath}`);
+                    continue;
+                }
+                
+                // Add the webserver config file
+                this.projectFiles.set(webServerConfigPath, {
+                    content: templateContent,
+                    isBinary: false,
+                    type: 'mapp_cockpit',
+                    name: 'mCoWebSc.mcowebservercfg',
+                    extension: '.mcowebservercfg',
+                    hasBOM: false
+                });
+                console.log(`Added mCoWebSc.mcowebservercfg to ${folderPath}`);
+                
+                // Update Package.pkg to include the new file
+                const packageFile = this.projectFiles.get(packagePkg);
+                if (packageFile && packageFile.content && !packageFile.content.includes('mCoWebSc.mcowebservercfg')) {
+                    let packageContent = packageFile.content;
+                    const insertPoint = packageContent.lastIndexOf('</Objects>');
+                    if (insertPoint !== -1) {
+                        const newEntry = '    <Object Type="File">mCoWebSc.mcowebservercfg</Object>\n  ';
+                        packageContent = packageContent.substring(0, insertPoint) + newEntry + packageContent.substring(insertPoint);
+                        this.projectFiles.set(packagePkg, { ...packageFile, content: packageContent });
+                        console.log(`Updated Package.pkg to include mCoWebSc.mcowebservercfg`);
+                    }
+                }
+                
+                // Add to analysis results
+                this.analysisResults.push({
+                    severity: 'info',
+                    category: 'mappCockpit',
+                    name: 'mappCockpit WebServer Config Added',
+                    description: `Added mCoWebSc.mcowebservercfg for AS6 mappCockpit web server configuration`,
+                    file: webServerConfigPath,
+                    autoFixed: true
+                });
+            }
+        } catch (error) {
+            console.error('Failed to add mappCockpit webserver config:', error);
+        }
+    }
+
+    /**
+     * Get all CPU folder paths from the Physical configuration.
+     * CPU folders are identified by looking for Cpu.sw files in Physical/{Config}/{CPU}/ structure.
+     * 
+     * @returns {Array<{cpuPath: string, separator: string}>} Array of CPU folder paths
+     */
+    getAllCpuFolderPaths() {
+        const cpuFolders = [];
+        
+        this.projectFiles.forEach((file, path) => {
+            // Look for Cpu.sw files which indicate a CPU folder
+            // Path structure: ROOT/Physical/CONFIG_NAME/CPU_NAME/Cpu.sw
+            const pathLower = path.toLowerCase();
+            if (pathLower.endsWith('cpu.sw') || pathLower.endsWith('cpu.sw')) {
+                const separator = path.includes('/') ? '/' : '\\';
+                // Get the CPU folder path (parent of Cpu.sw)
+                const cpuPath = path.substring(0, path.lastIndexOf(separator));
+                cpuFolders.push({ cpuPath, separator });
+            }
+        });
+        
+        console.log(`Found ${cpuFolders.length} CPU folder(s) in Physical configuration`);
+        return cpuFolders;
+    }
+
+    /**
+     * Add AccessAndSecurity/UserRoleSystem folder with BRRole.brrole to all CPU configurations.
+     * This is required for AS6 projects to have proper user role definitions.
+     * 
+     * Project structure: ROOT/Physical/CONFIG/CPU/AccessAndSecurity/UserRoleSystem/
+     */
+    async addUserRoleSystemFiles() {
+        console.log('Adding AccessAndSecurity/UserRoleSystem files to CPU configurations...');
+        
+        const cpuFolders = this.getAllCpuFolderPaths();
+        
+        if (cpuFolders.length === 0) {
+            console.log('No CPU folders found, skipping UserRoleSystem setup');
+            return;
+        }
+        
+        // Template path for BRRole.brrole
+        const brRoleTemplatePath = 'LibrariesForAS6/TechnologyPackages/AAS/n.d/ObjectCatalog/Elements/AccessAndSecurity/Template/AccessAndSecurity/UserRoleSystem/BRRole.brrole';
+        const userRolePkgTemplatePath = 'LibrariesForAS6/TechnologyPackages/AAS/n.d/ObjectCatalog/Elements/AccessAndSecurity/Template/AccessAndSecurity/UserRoleSystem/Package.pkg';
+        const accessSecurityPkgTemplatePath = 'LibrariesForAS6/TechnologyPackages/AAS/n.d/ObjectCatalog/Elements/AccessAndSecurity/Template/AccessAndSecurity/Package.pkg';
+        
+        try {
+            // Fetch template files
+            const [brRoleResponse, userRolePkgResponse, accessSecurityPkgResponse] = await Promise.all([
+                fetch(brRoleTemplatePath),
+                fetch(userRolePkgTemplatePath),
+                fetch(accessSecurityPkgTemplatePath)
+            ]);
+            
+            if (!brRoleResponse.ok) {
+                console.warn(`Could not fetch BRRole.brrole template: ${brRoleResponse.status}`);
+                return;
+            }
+            if (!userRolePkgResponse.ok) {
+                console.warn(`Could not fetch UserRoleSystem Package.pkg template: ${userRolePkgResponse.status}`);
+                return;
+            }
+            if (!accessSecurityPkgResponse.ok) {
+                console.warn(`Could not fetch AccessAndSecurity Package.pkg template: ${accessSecurityPkgResponse.status}`);
+                return;
+            }
+            
+            const brRoleContent = await brRoleResponse.text();
+            const userRolePkgContent = await userRolePkgResponse.text();
+            const accessSecurityPkgContent = await accessSecurityPkgResponse.text();
+            
+            // Add files to each CPU folder
+            for (const { cpuPath, separator } of cpuFolders) {
+                const accessSecurityPath = cpuPath + separator + 'AccessAndSecurity';
+                const userRoleSystemPath = accessSecurityPath + separator + 'UserRoleSystem';
+                const brRolePath = userRoleSystemPath + separator + 'BRRole.brrole';
+                const userRolePkgPath = userRoleSystemPath + separator + 'Package.pkg';
+                const accessSecurityPkgPath = accessSecurityPath + separator + 'Package.pkg';
+                
+                // Check if BRRole.brrole already exists - if so, skip this CPU
+                if (this.projectFiles.has(brRolePath)) {
+                    console.log(`BRRole.brrole already exists in ${cpuPath}`);
+                    continue;
+                }
+                
+                // Add BRRole.brrole
+                this.projectFiles.set(brRolePath, {
+                    content: brRoleContent,
+                    isBinary: false,
+                    type: 'brrole',
+                    name: 'BRRole.brrole',
+                    extension: '.brrole',
+                    hasBOM: false
+                });
+                console.log(`Added BRRole.brrole to ${userRoleSystemPath}`);
+                
+                // Add or update UserRoleSystem/Package.pkg
+                if (!this.projectFiles.has(userRolePkgPath)) {
+                    // Create new UserRoleSystem/Package.pkg with BRRole.brrole
+                    this.projectFiles.set(userRolePkgPath, {
+                        content: userRolePkgContent,
+                        isBinary: false,
+                        type: 'package',
+                        name: 'Package.pkg',
+                        extension: '.pkg',
+                        hasBOM: false
+                    });
+                    console.log(`Created UserRoleSystem/Package.pkg in ${userRoleSystemPath}`);
+                } else {
+                    // Update existing UserRoleSystem/Package.pkg to include BRRole.brrole if not already present
+                    const userRolePkgFile = this.projectFiles.get(userRolePkgPath);
+                    if (userRolePkgFile && typeof userRolePkgFile.content === 'string' && 
+                        !userRolePkgFile.content.includes('BRRole.brrole')) {
+                        let pkgContent = userRolePkgFile.content;
+                        const insertPoint = pkgContent.indexOf('</Objects>');
+                        if (insertPoint !== -1) {
+                            const newEntry = '    <Object Type="File">BRRole.brrole</Object>\n  ';
+                            pkgContent = pkgContent.substring(0, insertPoint) + newEntry + pkgContent.substring(insertPoint);
+                            this.projectFiles.set(userRolePkgPath, { ...userRolePkgFile, content: pkgContent });
+                            console.log(`Updated UserRoleSystem/Package.pkg to include BRRole.brrole`);
+                        }
+                    }
+                }
+                
+                // Add or update AccessAndSecurity/Package.pkg
+                if (!this.projectFiles.has(accessSecurityPkgPath)) {
+                    // Create AccessAndSecurity/Package.pkg with just UserRoleSystem
+                    const minimalAccessSecurityPkg = `<?xml version="1.0" encoding="utf-8"?>
+<?AutomationStudio Version=4.2.1.186?>
+<Package PackageType="AccessAndSecurity" xmlns="http://br-automation.co.at/AS/Package">
+  <Objects>
+    <Object Type="Package">UserRoleSystem</Object>
+  </Objects>
+</Package>`;
+                    this.projectFiles.set(accessSecurityPkgPath, {
+                        content: minimalAccessSecurityPkg,
+                        isBinary: false,
+                        type: 'package',
+                        name: 'Package.pkg',
+                        extension: '.pkg',
+                        hasBOM: false
+                    });
+                    console.log(`Created AccessAndSecurity/Package.pkg in ${accessSecurityPath}`);
+                } else {
+                    // Update existing AccessAndSecurity/Package.pkg to include UserRoleSystem if not already present
+                    const accessPkgFile = this.projectFiles.get(accessSecurityPkgPath);
+                    if (accessPkgFile && typeof accessPkgFile.content === 'string' && 
+                        !accessPkgFile.content.includes('UserRoleSystem')) {
+                        let pkgContent = accessPkgFile.content;
+                        const insertPoint = pkgContent.indexOf('</Objects>');
+                        if (insertPoint !== -1) {
+                            const newEntry = '    <Object Type="Package">UserRoleSystem</Object>\n  ';
+                            pkgContent = pkgContent.substring(0, insertPoint) + newEntry + pkgContent.substring(insertPoint);
+                            this.projectFiles.set(accessSecurityPkgPath, { ...accessPkgFile, content: pkgContent });
+                            console.log(`Updated AccessAndSecurity/Package.pkg to include UserRoleSystem`);
+                        }
+                    }
+                }
+                
+                // Add to analysis results
+                this.analysisResults.push({
+                    severity: 'info',
+                    category: 'AccessAndSecurity',
+                    name: 'UserRoleSystem Added',
+                    description: `Added AccessAndSecurity/UserRoleSystem with BRRole.brrole for AS6 user role definitions`,
+                    file: brRolePath,
+                    autoFixed: true
+                });
+            }
+        } catch (error) {
+            console.error('Failed to add UserRoleSystem files:', error);
         }
     }
 
@@ -5786,7 +6214,10 @@ ${mappingGroups}
             function_block: '🧩',
             deprecated_function_call: '🔄',
             deprecated_constant: '🔢',
+            deprecated_motion_type: '🔀',
             deprecated_function_block: '🚫',
+            deprecated_struct_member: '🚫',
+            deprecated_member_rename: '✏️',
             hardware: '🔌',
             project: '📁',
             technology_package: '📦',
@@ -5809,7 +6240,10 @@ ${mappingGroups}
             function_block: 'Function Blocks',
             deprecated_function_call: 'Deprecated Function Calls',
             deprecated_constant: 'Deprecated Constants',
+            deprecated_motion_type: 'Deprecated Motion Types',
             deprecated_function_block: 'Removed Function Blocks',
+            deprecated_struct_member: 'Removed Struct Members',
+            deprecated_member_rename: 'Renamed Members',
             hardware: 'Hardware Modules',
             project: 'Project Format',
             technology_package: 'Technology Packages',
@@ -6034,6 +6468,19 @@ ${mappingGroups}
             const escapedOld = oldConst.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             after = before.replace(new RegExp(`\\b${escapedOld}\\b`, 'gi'), newConst);
             notes = finding.notes || `Replace ${oldConst} with ${newConst}`;
+        } else if (finding.type === 'deprecated_motion_type' && finding.conversion) {
+            // Deprecated motion type replacement (e.g., McAcpAxCamAutParType → McCamAutParType)
+            const oldType = finding.conversion.from;
+            const newType = finding.conversion.to;
+            const escapedOld = oldType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            after = before.replace(new RegExp(`\\b${escapedOld}\\b`, 'gi'), newType);
+            notes = finding.notes || `Replace ${oldType} with ${newType}`;
+        } else if (finding.type === 'deprecated_member_rename' && finding.conversion) {
+            // Member rename replacement (e.g., MpReportCore_0.Name → MpReportCore_0.FileName)
+            // Uses pattern-based replacement to preserve the variable name
+            const pattern = new RegExp(finding.conversion.pattern, 'gi');
+            after = before.replace(pattern, finding.conversion.replacement);
+            notes = finding.notes || `Replace ${finding.conversion.from} with ${finding.conversion.to}`;
         } else if (finding.type === 'hardware' && finding.replacement) {
             // Replace hardware reference
             after = before.replace(finding.name, finding.replacement.name);
@@ -6262,6 +6709,28 @@ ${mappingGroups}
             // Track constant replacements for reporting
             this.constantReplacements = this.constantReplacements || new Map();
             this.constantReplacements.set(oldConst, newConst);
+        } else if (finding.type === 'deprecated_motion_type' && finding.conversion && finding.autoReplace) {
+            // Deprecated motion type replacement (McAcpAx* → Mc* types)
+            const oldType = finding.conversion.from;
+            const newType = finding.conversion.to;
+            
+            // Replace type: use word boundary to match standalone identifiers
+            const escapedOld = oldType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const pattern = new RegExp(`\\b${escapedOld}\\b`, 'g');
+            convertedContent = originalContent.replace(pattern, newType);
+            
+            // Track type replacements for reporting
+            this.motionTypeReplacements = this.motionTypeReplacements || new Map();
+            this.motionTypeReplacements.set(oldType, newType);
+        } else if (finding.type === 'deprecated_member_rename' && finding.conversion && finding.autoReplace) {
+            // Struct/FB member rename (e.g., MpReportCore_0.Name → MpReportCore_0.FileName)
+            // Uses pattern-based replacement to only match variables containing the FB type name
+            const pattern = new RegExp(finding.conversion.pattern, 'gi');
+            convertedContent = originalContent.replace(pattern, finding.conversion.replacement);
+            
+            // Track member renames for reporting
+            this.memberRenames = this.memberRenames || new Map();
+            this.memberRenames.set(finding.conversion.from, finding.conversion.to);
         } else if (finding.type === 'library' && finding.autoReplace && finding.replacement) {
             // Library reference replacement (e.g., AsString → AsBrStr in LIBRARY declarations)
             const oldLib = finding.name;
@@ -6271,8 +6740,9 @@ ${mappingGroups}
             if (finding.file.toLowerCase().endsWith('package.pkg')) {
                 // For Package.pkg files, check if the replacement library already exists
                 // If so, remove the deprecated library entry instead of renaming
-                const newLibPattern = new RegExp(`>\\s*${newLib}\\s*<\\/Object>`, 'i');
-                const oldLibLinePattern = new RegExp(`\\s*<Object[^>]*>\\s*${oldLib}\\s*<\\/Object>\\s*\\n?`, 'gi');
+                // IMPORTANT: Only match Type="Library", not Type="Package" or Type="File"
+                const newLibPattern = new RegExp(`<Object\\s+Type="Library"[^>]*>\\s*${newLib}\\s*<\\/Object>`, 'i');
+                const oldLibLinePattern = new RegExp(`\\s*<Object\\s+Type="Library"[^>]*>\\s*${oldLib}\\s*<\\/Object>\\s*\\n?`, 'gi');
                 
                 if (newLibPattern.test(originalContent)) {
                     // Replacement library already exists - remove the deprecated library entry
@@ -6281,8 +6751,8 @@ ${mappingGroups}
                 } else {
                     // Replacement library doesn't exist - rename the deprecated library
                     const escapedOld = oldLib.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                    const pattern = new RegExp(`>\\s*${escapedOld}\\s*<\\/Object>`, 'gi');
-                    convertedContent = originalContent.replace(pattern, `>${newLib}</Object>`);
+                    const pattern = new RegExp(`(<Object\\s+Type="Library"[^>]*>\\s*)${escapedOld}(\\s*<\\/Object>)`, 'gi');
+                    convertedContent = originalContent.replace(pattern, `$1${newLib}$2`);
                 }
             } else if (finding.file.toLowerCase().endsWith('.sw')) {
                 // For .sw files, check if the replacement library already exists
@@ -6810,6 +7280,12 @@ ${mappingGroups}
         
         // Replace acp10sys.br files in Physical folders with AS6 version
         await this.replaceAcp10sysBrFiles();
+        
+        // Add mCoWebSc.mcowebservercfg to mappCockpit folders if mappCockpit is used
+        await this.addMappCockpitWebServerConfig();
+        
+        // Add AccessAndSecurity/UserRoleSystem with BRRole.brrole to all CPU configurations
+        await this.addUserRoleSystemFiles();
         
         // Show progress dialog
         const progressDialog = document.getElementById('downloadProgressDialog');
