@@ -1332,6 +1332,9 @@ class AS4Converter {
             // Auto-remove MpWebXs technology package (not supported in AS6)
             this.autoRemoveMpWebXs();
             
+            // Auto-add BR_Engineer role to all users in .user files (required for mappView OPC UA PV access)
+            this.autoApplyUserBREngineerRole();
+            
             // Update UI
             this.displayAnalysisResults();
             this.switchTab('analysis');
@@ -4376,6 +4379,107 @@ ${mappingGroups}
         
         if (updatedCount > 0) {
             console.log(`MappView configuration updated for ${updatedCount} file(s)`);
+        }
+    }
+
+    /**
+     * Auto-add BR_Engineer role to every user in .user files.
+     * In AS6, the BR_Engineer role is required for mappView HMI applications
+     * to have access to process variables (PVs) through OPC UA.
+     * 
+     * For each user element in .user files, this method checks if BR_Engineer
+     * is already assigned. If not, it adds it as an additional Role entry.
+     */
+    autoApplyUserBREngineerRole() {
+        console.log('Adding BR_Engineer role to all users in .user files...');
+        
+        let updatedFileCount = 0;
+        let updatedUserCount = 0;
+        
+        this.projectFiles.forEach((file, path) => {
+            if (!path.toLowerCase().endsWith('.user') || file.isBinary || typeof file.content !== 'string') return;
+            
+            let content = file.content;
+            
+            // Skip if file doesn't look like a user configuration
+            if (!content.includes('<Element') || !content.includes('Type="User"')) return;
+            
+            // Already has BR_Engineer for all users? Quick check
+            // We need to process per-user, so we can't just do a single check
+            
+            let fileModified = false;
+            const usersUpdated = [];
+            
+            // Match each Element block for users
+            // Process each <Group ID="Roles"> block within user elements
+            const elementRegex = /<Element\s+ID="([^"]*)"\s+Type="User"[^>]*>([\s\S]*?)<\/Element>/g;
+            let match;
+            
+            while ((match = elementRegex.exec(content)) !== null) {
+                const userId = match[1];
+                const elementContent = match[2];
+                const elementFullMatch = match[0];
+                
+                // Check if this user already has BR_Engineer
+                if (elementContent.includes('"BR_Engineer"')) {
+                    console.log(`User "${userId}" already has BR_Engineer role in ${path}`);
+                    continue;
+                }
+                
+                // Find the Roles group
+                const rolesGroupMatch = elementContent.match(/<Group\s+ID="Roles">[\s\S]*?<\/Group>/);
+                if (!rolesGroupMatch) {
+                    console.log(`User "${userId}" has no Roles group in ${path}, skipping`);
+                    continue;
+                }
+                
+                const rolesGroup = rolesGroupMatch[0];
+                
+                // Count existing roles to determine the next Role index
+                const roleEntries = rolesGroup.match(/Role\[(\d+)\]/g) || [];
+                const maxIndex = roleEntries.reduce((max, entry) => {
+                    const idx = parseInt(entry.match(/\d+/)[0]);
+                    return Math.max(max, idx);
+                }, 0);
+                const newIndex = maxIndex + 1;
+                
+                // Insert the new role before </Group>
+                const newRoleEntry = `      <Property ID="Role[${newIndex}]" Value="BR_Engineer" />`;
+                const updatedRolesGroup = rolesGroup.replace(
+                    '</Group>',
+                    newRoleEntry + '\n    </Group>'
+                );
+                
+                // Replace in the element
+                const updatedElement = elementFullMatch.replace(rolesGroup, updatedRolesGroup);
+                content = content.replace(elementFullMatch, updatedElement);
+                
+                usersUpdated.push(userId);
+                updatedUserCount++;
+                fileModified = true;
+                console.log(`Added BR_Engineer role (Role[${newIndex}]) to user "${userId}" in ${path}`);
+            }
+            
+            if (fileModified) {
+                file.content = content;
+                updatedFileCount++;
+                
+                this.analysisResults.push({
+                    severity: 'info',
+                    category: 'security',
+                    name: 'BR_Engineer Role Added',
+                    description: `Added BR_Engineer role to ${usersUpdated.length} user(s): ${usersUpdated.join(', ')}. Required for mappView OPC UA PV access.`,
+                    file: path,
+                    autoFixed: true,
+                    details: usersUpdated.map(u => `Added BR_Engineer to user "${u}"`)
+                });
+            }
+        });
+        
+        if (updatedFileCount > 0) {
+            console.log(`BR_Engineer role added in ${updatedFileCount} .user file(s), ${updatedUserCount} user(s) updated`);
+        } else {
+            console.log('No .user files found or all users already have BR_Engineer role');
         }
     }
 
