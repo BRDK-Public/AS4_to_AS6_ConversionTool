@@ -1313,6 +1313,12 @@ class AS4Converter {
             // Auto-apply mappView configuration updates (startup user to anonymous)
             this.autoApplyMappViewConfigConversion();
             
+            // Auto-fix OPC UA server ConnectionPolicy in .uaserver files (must be "Current mapp view user")
+            this.autoApplyUaServerConnectionPolicy();
+            
+            // Auto-fix SecurityPolicy "None" enabled in .uacfg files (required for mappView OPC UA access)
+            this.autoApplyUaCfgSecurityPolicyNone();
+            
             // Auto-remove deprecated function blocks (MpAlarmXAcknowledgeAll, etc.)
             this.autoApplyDeprecatedFunctionBlockRemoval();
             
@@ -3185,7 +3191,7 @@ class AS4Converter {
     <Group ID="Security">
       <Group ID="MessageSecurity">
         <Group ID="SecurityPolicies">
-          <Property ID="None" Value="0" />
+          <Property ID="None" Value="1" />
           <Property ID="Basic128Rsa15" Value="0" />
           <Property ID="Basic256" Value="0" />
           <Property ID="Aes128Sha256RsaOaep" Value="1" />
@@ -4379,6 +4385,155 @@ ${mappingGroups}
         
         if (updatedCount > 0) {
             console.log(`MappView configuration updated for ${updatedCount} file(s)`);
+        }
+    }
+
+    /**
+     * Auto-fix OPC UA server ConnectionPolicy in .uaserver files.
+     * The ConnectionPolicy must be set to "1" (Current mapp view user) for mappView
+     * HMI applications to properly access PVs through OPC UA.
+     * 
+     * Value="1" = Current mapp view user (correct / default)
+     * Any other value = wrong, must be corrected
+     * If the Selector line is absent entirely, the default applies and no change is needed.
+     */
+    autoApplyUaServerConnectionPolicy() {
+        console.log('Checking OPC UA server ConnectionPolicy in .uaserver files...');
+        
+        let updatedCount = 0;
+        
+        this.projectFiles.forEach((file, path) => {
+            if (!path.toLowerCase().endsWith('.uaserver') || file.isBinary || typeof file.content !== 'string') return;
+            
+            let content = file.content;
+            
+            // Check if ConnectionPolicy is present with a value other than "1"
+            const connectionPolicyMatch = content.match(/<Selector\s+ID="ConnectionPolicy"\s+Value="([^"]*)"\s*\/?>/);
+            
+            if (!connectionPolicyMatch) {
+                // No ConnectionPolicy line found — default value applies, which is correct
+                console.log(`No ConnectionPolicy setting in ${path} — default (Current mapp view user) applies`);
+                return;
+            }
+            
+            const currentValue = connectionPolicyMatch[1];
+            
+            if (currentValue === '1') {
+                console.log(`ConnectionPolicy already set to "1" in ${path}`);
+                return;
+            }
+            
+            // Fix the value to "1"
+            const updatedContent = content.replace(
+                /<Selector\s+ID="ConnectionPolicy"\s+Value="[^"]*"\s*\/?>/,
+                '<Selector ID="ConnectionPolicy" Value="1" />'
+            );
+            
+            if (updatedContent !== content) {
+                file.content = updatedContent;
+                updatedCount++;
+                console.log(`Fixed ConnectionPolicy from "${currentValue}" to "1" in ${path}`);
+                
+                this.analysisResults.push({
+                    severity: 'warning',
+                    category: 'mappview',
+                    name: 'OPC UA ConnectionPolicy Fixed',
+                    description: `Changed ConnectionPolicy from "${currentValue}" to "1" (Current mapp view user). Required for mappView OPC UA PV access.`,
+                    file: path,
+                    autoFixed: true,
+                    details: [`ConnectionPolicy changed from "${currentValue}" to "1" (Current mapp view user)`]
+                });
+            }
+        });
+        
+        if (updatedCount > 0) {
+            console.log(`ConnectionPolicy fixed in ${updatedCount} .uaserver file(s)`);
+        } else {
+            console.log('All .uaserver files have correct ConnectionPolicy or none found');
+        }
+    }
+
+    /**
+     * Auto-fix SecurityPolicy "None" in .uacfg files.
+     * The "None" security policy must be enabled (Value="1") in the MessageSecurity
+     * SecurityPolicies group for mappView HMI applications to access PVs via OPC UA.
+     *
+     * If the Property is present with Value != "1", it is corrected.
+     * If the Property is missing entirely, it is inserted into the SecurityPolicies group.
+     */
+    autoApplyUaCfgSecurityPolicyNone() {
+        console.log('Checking SecurityPolicy "None" in .uacfg files...');
+        
+        let updatedCount = 0;
+        
+        this.projectFiles.forEach((file, path) => {
+            if (!path.toLowerCase().endsWith('.uacfg') || file.isBinary || typeof file.content !== 'string') return;
+            
+            let content = file.content;
+            
+            // Look for the MessageSecurity > SecurityPolicies group
+            // We need to target the first SecurityPolicies group (under MessageSecurity),
+            // not the second one (under Authentication)
+            const msgSecurityMatch = content.match(
+                /(<Group\s+ID="MessageSecurity">\s*<Group\s+ID="SecurityPolicies">)([\s\S]*?)(<\/Group>)/
+            );
+            
+            if (!msgSecurityMatch) {
+                console.log(`No MessageSecurity/SecurityPolicies group found in ${path}`);
+                return;
+            }
+            
+            const policiesContent = msgSecurityMatch[2];
+            
+            // Check if None property exists
+            const noneMatch = policiesContent.match(/<Property\s+ID="None"\s+Value="([^"]*)"\s*\/?>/);            
+            
+            if (noneMatch && noneMatch[1] === '1') {
+                console.log(`SecurityPolicy "None" already enabled in ${path}`);
+                return;
+            }
+            
+            let updatedContent;
+            let changeDetail;
+            
+            if (noneMatch) {
+                // Property exists but with wrong value — fix it
+                const oldValue = noneMatch[1];
+                updatedContent = content.replace(
+                    /(<Group\s+ID="MessageSecurity">\s*<Group\s+ID="SecurityPolicies">\s*)<Property\s+ID="None"\s+Value="[^"]*"\s*\/?>/,
+                    '$1<Property ID="None" Value="1" />'
+                );
+                changeDetail = `Changed SecurityPolicy "None" from "${oldValue}" to "1"`;
+            } else {
+                // Property is missing — insert it as the first entry in SecurityPolicies
+                updatedContent = content.replace(
+                    /(<Group\s+ID="MessageSecurity">\s*<Group\s+ID="SecurityPolicies">)/,
+                    '$1\n          <Property ID="None" Value="1" />'
+                );
+                changeDetail = 'Added SecurityPolicy "None" with Value="1"';
+            }
+            
+            if (updatedContent !== content) {
+                file.content = updatedContent;
+                updatedCount++;
+                console.log(`${changeDetail} in ${path}`);
+                
+                this.analysisResults.push({
+                    severity: 'warning',
+                    category: 'opcua',
+                    name: 'OPC UA SecurityPolicy "None" Enabled',
+                    description: `${changeDetail}. Required for mappView OPC UA PV access.`,
+                    file: path,
+                    autoFixed: true,
+                    details: [changeDetail]
+                });
+            }
+        });
+        
+        if (updatedCount > 0) {
+            console.log(`SecurityPolicy "None" fixed in ${updatedCount} .uacfg file(s)`);
+        } else {
+            console.log('All .uacfg files have SecurityPolicy "None" enabled or none found');
         }
     }
 
