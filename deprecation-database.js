@@ -85,8 +85,11 @@ const DeprecationDatabase = {
             'mappMotion': { 
                 as4Version: '5.24.1', 
                 as6Version: '6.0.0', 
-                required: false
-                // Note: MpAxis, MpCnc, MpRobotics, McAcpAx, McAxis, McBase are libraries, not subVersions
+                required: false,
+                // McDriveLog is a Module (not a Library) — always bundled with mappMotion.
+                // It won't appear in Package.pkg/.sw so collectUsedLibraries() won't find it.
+                // It must be merged into subVersions whenever mappMotion is output.
+                modules: { McDriveLog: '6.0.0' }
             },
             'mappControl': { 
                 as4Version: '5.24.1', 
@@ -393,8 +396,9 @@ const DeprecationDatabase = {
             'McPureVAx': { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
             'McStpAx':   { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
             'McTrkPath': { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
-            // Note: McDriveLog is a Module (not a Library) — managed internally by mappMotion,
-            // not listed as a subVersion. Modules folder: mappMotion/6.0.0/Modules/McDriveLog/
+            // Note: McDriveLog is a Module (not a Library) — it does NOT appear in Package.pkg/.sw files.
+            // It is therefore not in libraryMapping. Instead it is always injected as a subVersion
+            // via the 'modules' property on the 'mappMotion' technologyPackages entry above.
             
             // mappControl (6.1.0) - Advanced control / Temperature / Hydraulics
             // Mp* libraries (mapp control components)
@@ -1862,7 +1866,13 @@ const DeprecationDatabase = {
                         }
                     });
                     
-                    // Only set subVersions if we found any libraries for this package
+                    // Always merge in built-in module subVersions for this package (e.g. McDriveLog for mappMotion)
+                    const pkgDef = tpRef[name];
+                    if (pkgDef && pkgDef.modules) {
+                        Object.assign(packageLibs, pkgDef.modules);
+                    }
+
+                    // Only set subVersions if we found any libraries/modules for this package
                     if (Object.keys(packageLibs).length > 0) {
                         subVersions = packageLibs;
                     }
@@ -1904,7 +1914,13 @@ const DeprecationDatabase = {
                             }
                         });
                         
-                        // Only set subVersions if we found any libraries for this package
+                        // Always merge in built-in module subVersions for this package
+                        const newPkgDef = tpRef[name];
+                        if (newPkgDef && newPkgDef.modules) {
+                            Object.assign(packageLibs, newPkgDef.modules);
+                        }
+
+                        // Only set subVersions if we found any libraries/modules for this package
                         if (Object.keys(packageLibs).length > 0) {
                             subVersions = packageLibs;
                         }
