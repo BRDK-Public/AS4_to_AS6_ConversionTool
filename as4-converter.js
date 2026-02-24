@@ -1310,6 +1310,9 @@ class AS4Converter {
             // Auto-apply mappServices AlarmX conversion (split core file to AS6 format)
             this.autoApplyMappServicesConversion();
             
+            // Auto-apply MpDataRecorder conversion (restructure DataRecorder group to AS6 format)
+            this.autoApplyMpDataRecorderConversion();
+            
             // Auto-apply mappView configuration updates (startup user to anonymous)
             this.autoApplyMappViewConfigConversion();
             
@@ -4468,6 +4471,218 @@ ${mappingGroups}
         if (updatedCount > 0) {
             console.log(`MappView configuration updated for ${updatedCount} file(s)`);
         }
+    }
+
+    /**
+     * Auto-apply MpDataRecorder conversion from AS4 to AS6 format.
+     *
+     * AS4 → AS6 changes per Element:
+     *  1. Add <Group ID="mapp.Gen"> with Enable=TRUE and Parent (from mpComGroupParentMap)
+     *  2. Restructure <Group ID="DataRecorder">:
+     *     - Add Memory Selector (DRAM default)
+     *     - Move SaveInitialValues / DecimalDigits into Record sub-group with defaults
+     *     - Move MaxFileSize / FileNamePattern into File sub-group with defaults
+     *  3. Expand Alarms section: always emit 3 default alarms (RecordingCompleted,
+     *     RecordingAborted, LimitViolated), merging any user-customised properties from AS4.
+     */
+    autoApplyMpDataRecorderConversion() {
+        console.log('Converting MpDataRecorder configuration to AS6 format...');
+
+        const parentMap = this.mpComGroupParentMap || new Map();
+        let convertedFileCount = 0;
+
+        this.projectFiles.forEach((file, path) => {
+            if (!path.toLowerCase().endsWith('.mpdatarecorder') ||
+                file.isBinary || typeof file.content !== 'string') {
+                return;
+            }
+
+            // Parse all Element nodes in this file
+            const elementPattern = /<Element ID="([^"]+)" Type="mpdatarecorder">([\s\S]*?)<\/Element>/g;
+            let match;
+            const elements = [];
+
+            while ((match = elementPattern.exec(file.content)) !== null) {
+                elements.push({ id: match[1], body: match[2], raw: match[0] });
+            }
+
+            if (elements.length === 0) return;
+
+            // Convert each element
+            const convertedElements = elements.map(elem =>
+                this.convertMpDataRecorderElement(elem.id, elem.body, parentMap)
+            );
+
+            // Rebuild file
+            const newContent = `<?xml version="1.0" encoding="utf-8"?>\n<Configuration>\n${convertedElements.join('\n')}\n</Configuration>`;
+
+            if (newContent !== file.content) {
+                file.content = newContent;
+                convertedFileCount++;
+                console.log(`  Converted ${elements.length} element(s) in ${path}`);
+
+                this.analysisResults.push({
+                    severity: 'info',
+                    category: 'mappservices',
+                    name: 'MpDataRecorder Converted to AS6 Format',
+                    description: `Restructured ${elements.length} MpDataRecorder element(s) to AS6 format`,
+                    file: path,
+                    autoFixed: true,
+                    details: elements.map(e => `Converted element "${e.id}"`)
+                });
+            }
+        });
+
+        console.log(`Converted ${convertedFileCount} MpDataRecorder file(s) to AS6 format`);
+    }
+
+    /**
+     * Convert a single MpDataRecorder Element from AS4 to AS6 structure.
+     *
+     * @param {string} elemId   - Element ID (e.g. "mpLoggerTemperatures")
+     * @param {string} body     - Inner XML of the Element (between <Element …> and </Element>)
+     * @param {Map}    parentMap - mpComGroupParentMap (childId → parentId)
+     * @returns {string} Full AS6 <Element …>…</Element> block
+     */
+    convertMpDataRecorderElement(elemId, body, parentMap) {
+        // ---- 1. Extract AS4 DataRecorder properties ----
+        const as4Props = {};
+        const dataRecorderMatch = body.match(/<Group ID="DataRecorder">([\s\S]*?)<\/Group>/);
+        if (dataRecorderMatch) {
+            const propPattern = /<Property ID="([^"]+)" Value="([^"]*)" \/>/g;
+            let pm;
+            while ((pm = propPattern.exec(dataRecorderMatch[1])) !== null) {
+                as4Props[pm[1]] = pm[2];
+            }
+        }
+
+        // ---- 2. Extract AS4 Alarms section ----
+        const as4Alarms = new Map(); // index (string) → { properties }
+        const alarmsMatch = body.match(/<Selector ID="Alarms" Value="MpAlarmX">([\s\S]*?)<\/Selector>/);
+        if (alarmsMatch) {
+            const alarmGroupPattern = /<Group ID="\[(\d+)\]">([\s\S]*?)<\/Group>/g;
+            let ag;
+            while ((ag = alarmGroupPattern.exec(alarmsMatch[1])) !== null) {
+                const idx = ag[1];
+                const props = {};
+                const apPattern = /<Property ID="([^"]+)"\s*(?:Value="([^"]*)")?\s*\/>/g;
+                let ap;
+                while ((ap = apPattern.exec(ag[2])) !== null) {
+                    props[ap[1]] = ap[2] !== undefined ? ap[2] : '';
+                }
+                as4Alarms.set(idx, props);
+            }
+        }
+
+        // ---- 3. Build mapp.Gen group ----
+        const parentId = parentMap.get(elemId) || '';
+        const mappGen = `    <Group ID="mapp.Gen">
+      <Property ID="Enable" Value="TRUE" />
+      <Property ID="Parent"${parentId ? ` Value="${parentId}"` : ''} />
+    </Group>`;
+
+        // ---- 4. Build restructured DataRecorder group ----
+        const maxFileSize = as4Props['MaxFileSize'] || '1000';
+        const fileNamePattern = as4Props['FileNamePattern'] || 'DataRecorder%Y_%m_%d_%H_%M_%S.csv';
+        const saveInitialValues = as4Props['SaveInitialValues'] || 'TRUE';
+        const decimalDigits = as4Props['DecimalDigits'] || '2';
+
+        const dataRecorder = `    <Group ID="DataRecorder">
+      <Selector ID="Memory" Value="DRAM">
+        <Property ID="BufferSize" Value="100" />
+        <Property ID="Interval" Value="10000" />
+      </Selector>
+      <Group ID="Record">
+        <Property ID="AutoSave" Value="TRUE" />
+        <Property ID="SaveInitialValues" Value="${saveInitialValues}" />
+        <Property ID="DecimalDigits" Value="${decimalDigits}" />
+        <Property ID="MeasurementSystem" Value="EU" />
+        <Property ID="UnitDisplay" Value="0" />
+      </Group>
+      <Group ID="File">
+        <Property ID="MaxNumberOfFiles" Value="1" />
+        <Property ID="MaxFileSize" Value="${maxFileSize}" />
+        <Property ID="OverwriteOldestFile" Value="FALSE" />
+        <Property ID="FileNamePattern" Value="${fileNamePattern}" />
+        <Property ID="TimeStampPattern" Value="%Y %m %d %H:%M:%S:%L" />
+        <Property ID="ColumnSeparator" Value=";" />
+        <Property ID="DecimalMark" Value="," />
+        <Selector ID="Format" Value="CSV" />
+      </Group>
+    </Group>`;
+
+        // ---- 5. Build AS6 Alarms section ----
+        const alarmsSection = this.buildMpDataRecorderAlarms(as4Alarms);
+
+        // ---- 6. Assemble ----
+        return `  <Element ID="${elemId}" Type="mpdatarecorder">
+${mappGen}
+${dataRecorder}
+${alarmsSection}
+  </Element>`;
+    }
+
+    /**
+     * Build the full Alarms Selector for an AS6 MpDataRecorder Element.
+     *
+     * Always emits three default alarm groups:
+     *   [0] RecordingCompleted
+     *   [1] RecordingAborted
+     *   [2] LimitViolated
+     *
+     * Properties that the AS4 source defined for a given index are merged in,
+     * overriding the defaults.
+     *
+     * @param {Map} as4Alarms - Map of alarm index → { propId: value } from AS4
+     * @returns {string} Complete <Selector ID="Alarms" …>…</Selector> XML block
+     */
+    buildMpDataRecorderAlarms(as4Alarms) {
+        const defaultAlarms = [
+            { index: 0, name: 'RecordingCompleted', message: '{$BR/mapp/MpDataRecorder/Alarms/RecordingCompleted}', code: '0', severity: '1' },
+            { index: 1, name: 'RecordingAborted',   message: '{$BR/mapp/MpDataRecorder/Alarms/RecordingAborted}',   code: '0', severity: '1' },
+            { index: 2, name: 'LimitViolated',      message: '{$BR/mapp/MpDataRecorder/Alarms/LimitViolated}',      code: '0', severity: '1' }
+        ];
+
+        const groups = defaultAlarms.map(def => {
+            const idx = String(def.index);
+            const as4 = as4Alarms.get(idx) || {};
+
+            // Merge: AS4 values override defaults
+            const name     = as4['Name']     || def.name;
+            const message  = as4['Message']  || def.message;
+            const code     = as4['Code']     || def.code;
+            const severity = as4['Severity'] || def.severity;
+
+            return `      <Group ID="[${idx}]">
+        <Property ID="Name" Value="${name}" />
+        <Property ID="Message" Value="${this.escapeXmlAttribute(message)}" />
+        <Property ID="Code" Value="${code}" />
+        <Property ID="Severity" Value="${severity}" />
+        <Selector ID="Behavior" Value="EdgeAlarm">
+          <Property ID="AutoReset" Value="TRUE" />
+          <Property ID="Acknowledge" Value="1" />
+          <Property ID="Confirm" Value="0" />
+          <Property ID="MultipleInstances" Value="TRUE" />
+          <Property ID="ReactionWhilePending" Value="TRUE" />
+          <Property ID="Async" Value="FALSE" />
+          <Group ID="Recording">
+            <Property ID="InactiveToActive" Value="TRUE" />
+            <Property ID="ActiveToInactive" Value="FALSE" />
+            <Property ID="UnacknowledgedToAcknowledged" Value="TRUE" />
+            <Property ID="UnconfirmedToConfirmed" Value="TRUE" />
+          </Group>
+        </Selector>
+        <Property ID="Disable" Value="FALSE" />
+        <Property ID="AdditionalInformation1" />
+        <Property ID="AdditionalInformation2" />
+      </Group>`;
+        });
+
+        return `    <Selector ID="Alarms" Value="MpAlarmX">
+      <Group ID="mapp.AlarmX.Core.Configuration">
+${groups.join('\n')}
+      </Group>
+    </Selector>`;
     }
 
     /**
