@@ -53,11 +53,15 @@ When replacing libraries, ALWAYS check if the replacement already exists:
 ### Technology Package SubVersions
 SubVersions are built DYNAMICALLY from `collectUsedLibraries()`. Only include subVersions for libraries actually present in the user's project—never use static lists.
 
+**Modules vs Libraries:** Some subVersions are Modules (e.g. `McDriveLog` for mappMotion), not Libraries. Modules never appear in `Package.pkg`/`.sw` files, so `collectUsedLibraries()` cannot find them. Add them to a `modules` property on the tech package entry in `technologyPackages`—the converter will always merge them into subVersions.
+
+**Non-self-closing AS4 format:** Some AS4 projects nest subVersion child elements inside the package tag (e.g. `<mappMotion Version="x"><McAcpPar Version="y"/></mappMotion>`). The `extractTechnologyPackages()` depth tracker handles this—only the parent (depth 0) is extracted; children are rebuilt from `libraryMapping`.
+
 ### Technology Packages & Versions
 | Package | AS6 Version | Libraries |
 |---------|-------------|-----------|
 | `mappServices` | 6.2.0 | MpAlarmX, MpAudit, MpBackup, MpCom, MpData, MpFile, MpRecipe, MpServer, MpUserX |
-| `mappMotion` | 6.0.0 | MpAxis, MpCnc, MpRobotics, McAcpAx, McAxis, McBase |
+| `mappMotion` | 6.0.0 | MpAxis, MpCnc, MpRobotics, MpPick, MpTool, McAcpAx, McAcpPar, McAcpTrak, McAxis, McAxGroup, McBase, McDS402Ax, McPathGen, McProgInt, McPureVAx, McStpAx, McTrkPath + **McDriveLog** (Module — always injected) |
 | `mappControl` | 6.1.0 | MpTemp, MpHydAxis, MpPump, MTBasics, MTFilter, MTProfile |
 | `mappView` | 6.0.0 | (visualization components) |
 | `mappVision` | 6.0.0 | ViAccess, ViBase |

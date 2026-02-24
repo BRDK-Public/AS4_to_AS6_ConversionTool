@@ -79,11 +79,17 @@ When replacing libraries in Package.pkg or .sw files:
 - Built DYNAMICALLY based on actual libraries used in project
 - Uses `collectUsedLibraries()` to scan project
 - Only includes subVersions for libraries actually present
+- **Module subVersions** (e.g. `McDriveLog` for mappMotion) are NOT libraries — add them to a `modules: {}` property on the tech package entry so they are always injected
+- **Non-self-closing AS4 format** (`<mappMotion><McAcpPar .../></mappMotion>`) is handled by `extractTechnologyPackages()` depth tracker — child elements are ignored and rebuilt from `libraryMapping`
 
 ### Libraries Without Replacement
 Some deprecated libraries have no AS6 replacement (e.g., AsSafety):
 - Set `replacement: null` and `autoReplace: false`
 - `autoApplyDeprecatedLibraryReplacements()` removes these entries entirely
+
+### Hardware Deprecation Matching
+- `isDeprecatedHardware()` uses **exact** (`===`) matching — never `.includes()`, which would cause false positives for variant module names (e.g. `X20BC0083ab`)
+- Only add a hardware module to `deprecatedHardware` if it is genuinely not supported in AS6
 
 ### AS Version Detection
 - Detected when loading .apj file in `processFiles()`

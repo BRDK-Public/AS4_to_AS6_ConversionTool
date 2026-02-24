@@ -3525,8 +3525,8 @@ ${roleGroups}
         
         console.log(`  Found ${elements.length} Element node(s): ${elements.map(e => e.id).join(', ')}`);
         
-        // Look up parent groups from mpcomgroup files
-        const parentGroupMap = this.findMpComGroupParents();
+        // Look up parent groups from mpcomgroup files (use stored map - Linking/Subnodes already stripped)
+        const parentGroupMap = this.mpComGroupParentMap || this.findMpComGroupParents();
         
         // Generate the core file with all Elements (references to lists and categories)
         const coreElements = [];
@@ -4288,6 +4288,23 @@ ${mappingGroups}
     autoApplyMpComGroupConversion() {
         console.log('Converting MpComGroup configuration to AS6 format...');
         
+        // Step 1: Build element ID → file info map for all mpcomgroup files
+        const elementMap = new Map(); // elementId -> { path, file }
+        this.projectFiles.forEach((file, path) => {
+            if (path.toLowerCase().endsWith('.mpcomgroup') && typeof file.content === 'string') {
+                const idMatch = file.content.match(/<Element ID="([^"]+)" Type="mpcomgroup"/);
+                if (idMatch) {
+                    elementMap.set(idMatch[1], { path, file });
+                }
+            }
+        });
+        
+        // Step 2: Read parent-child relationships BEFORE stripping Linking/Subnodes
+        // This map is also stored for later use by AlarmX conversion
+        this.mpComGroupParentMap = this.findMpComGroupParents();
+        console.log(`  Found ${this.mpComGroupParentMap.size} parent-child relationship(s) in MpComGroup files`);
+        
+        // Step 3: Strip Linking/Subnodes from all files (AS4 parent-declares-children format)
         let convertedCount = 0;
         
         this.projectFiles.forEach((file, path) => {
@@ -4299,7 +4316,7 @@ ${mappingGroups}
                 if (converted !== file.content) {
                     file.content = converted;
                     convertedCount++;
-                    console.log(`  Converted: ${path}`);
+                    console.log(`  Stripped Linking/Subnodes: ${path}`);
                     
                     this.analysisResults.push({
                         severity: 'info',
@@ -4308,13 +4325,48 @@ ${mappingGroups}
                         description: 'Removed Linking/Subnodes groups from MpComGroup configuration',
                         file: path,
                         autoFixed: true,
-                        details: ['Removed Linking/Subnodes groups, kept Selector elements']
+                        details: ['Removed Linking/Subnodes groups (AS4 parent-declares-children format)']
                     });
                 }
             }
         });
         
-        console.log(`Converted ${convertedCount} MpComGroup file(s) to AS6 format`);
+        // Step 4: Inject Parent property into child mpcomgroup files (AS6 child-declares-parent format)
+        let parentInjectedCount = 0;
+        this.mpComGroupParentMap.forEach((parentId, childId) => {
+            const childInfo = elementMap.get(childId);
+            if (!childInfo) {
+                console.log(`  Skipping parent injection for '${childId}' - no matching mpcomgroup file found (may be a non-group component)`);
+                return;
+            }
+            
+            const { path, file } = childInfo;
+            
+            // Skip if Parent is already set
+            if (file.content.includes('<Property ID="Parent"')) {
+                console.log(`  Parent already set in ${childId}, skipping`);
+                return;
+            }
+            
+            const updatedContent = this.injectMpComGroupParent(file.content, parentId);
+            if (updatedContent !== file.content) {
+                file.content = updatedContent;
+                parentInjectedCount++;
+                console.log(`  Injected Parent="${parentId}" into ${childId} (${path})`);
+                
+                this.analysisResults.push({
+                    severity: 'info',
+                    category: 'mappservices',
+                    name: 'MpComGroup Parent Reference Added',
+                    description: `Set parent of '${childId}' to '${parentId}' (AS6 reversed hierarchy)`,
+                    file: path,
+                    autoFixed: true,
+                    details: [`Added mapp.Gen/Parent = "${parentId}"`]
+                });
+            }
+        });
+        
+        console.log(`Converted ${convertedCount} MpComGroup file(s), injected parent into ${parentInjectedCount} child file(s)`);
     }
     
     /**
@@ -4340,6 +4392,36 @@ ${mappingGroups}
         result = result.replace(/\n\s*\n\s*\n/g, '\n\n');
         
         return result;
+    }
+
+    /**
+     * Inject a Parent property into an mpcomgroup file content.
+     * In AS6, child components declare their parent (reversed from AS4 where parent declared children).
+     * Adds <Group ID="mapp.Gen"><Property ID="Parent" Value="parentId" /></Group>
+     */
+    injectMpComGroupParent(content, parentId) {
+        // If there's already a mapp.Gen group, add Parent property inside it
+        if (content.includes('<Group ID="mapp.Gen">')) {
+            return content.replace(
+                /(<Group ID="mapp\.Gen">)/,
+                `$1\n      <Property ID="Parent" Value="${parentId}" />`
+            );
+        }
+        
+        // Insert mapp.Gen group with Parent before </Element>
+        if (content.includes('</Element>')) {
+            const parentGroup = `    <Group ID="mapp.Gen">\n      <Property ID="Parent" Value="${parentId}" />\n    </Group>`;
+            return content.replace(
+                '</Element>',
+                `${parentGroup}\n  </Element>`
+            );
+        }
+        
+        // Handle self-closing Element: <Element ID="..." Type="mpcomgroup" />
+        return content.replace(
+            /(<Element ID="[^"]+" Type="mpcomgroup")\s*\/>/,
+            `$1>\n    <Group ID="mapp.Gen">\n      <Property ID="Parent" Value="${parentId}" />\n    </Group>\n  </Element>`
+        );
     }
 
     /**
