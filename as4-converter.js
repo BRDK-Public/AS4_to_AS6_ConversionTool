@@ -3538,8 +3538,9 @@ ${roleGroups}
         const queryElements = [];
         
         for (const elem of elements) {
-            const elemId = elem.id;
-            const parentGroup = parentGroupMap.get(elemId);
+            const originalElemId = elem.id;
+            const elemId = this.truncateElementId(elem.id, 23); // 32 - '_Category'.length
+            const parentGroup = parentGroupMap.get(originalElemId);
             
             // Extract Configuration content (alarm definitions)
             const configMatch = elem.content.match(/<Group ID="mapp\.AlarmX\.Core\.Configuration">([\s\S]*?)<\/Group>(?=\s*<Group ID="mapp\.AlarmX\.Core\.Snippets">|\s*$)/);
@@ -3755,7 +3756,7 @@ ${queryElements.join('\n')}
                 // Add the mapp.Gen group if not present
                 if (!historyContent.includes('mapp.Gen')) {
                     const elemIdMatch = historyContent.match(/<Element ID="([^"]+)"/);
-                    const elemId = elemIdMatch ? elemIdMatch[1] : 'mpAlarmXHistory';
+                    const elemId = this.truncateElementId(elemIdMatch ? elemIdMatch[1] : 'mpAlarmXHistory');
                     
                     historyContent = `<?xml version="1.0" encoding="utf-8"?>
 <Configuration>
@@ -3800,6 +3801,46 @@ ${queryElements.join('\n')}
         }
         const truncated = baseName.substring(0, maxLength);
         console.log(`  Truncated base name from '${baseName}' to '${truncated}' (10-char limit)`);
+        return truncated;
+    }
+
+    /**
+     * Truncate a mapp component element ID so that derived object names
+     * stay within the 32-character AS6 object name limit.
+     *
+     * For components that generate suffixed names (_List, _Category, _Query)
+     * pass maxLength = 32 − longestSuffixLength (e.g. 23 for AlarmX).
+     * For components without suffixes, use the default maxLength = 32.
+     *
+     * Prefers truncating at a camelCase boundary (uppercase letter) or underscore
+     * for a more readable result, falling back to a hard cut when no good boundary exists.
+     *
+     * @param {string} elemId    - Original element ID from AS4
+     * @param {number} maxLength - Maximum allowed length for the base ID (default 32)
+     * @returns {string} Element ID that is at most maxLength characters
+     */
+    truncateElementId(elemId, maxLength = 32) {
+        if (elemId.length <= maxLength) {
+            return elemId;
+        }
+
+        const candidate = elemId.substring(0, maxLength);
+
+        // Walk backwards looking for a camelCase transition or underscore boundary
+        let cutAt = -1;
+        for (let i = candidate.length - 1; i > Math.floor(maxLength / 2); i--) {
+            const c = candidate[i];
+            if (c === '_' || (c >= 'A' && c <= 'Z')) {
+                cutAt = i;
+                break;
+            }
+        }
+
+        // Use boundary if found, otherwise hard-cut at maxLength
+        // Strip any trailing underscore left by a boundary cut (e.g. "Foo_Bar_" → "Foo_Bar")
+        const truncated = (cutAt > 0 ? candidate.substring(0, cutAt) : candidate).replace(/_+$/, '') || candidate;
+
+        console.log(`  Truncated element ID from '${elemId}' to '${truncated}' (32-char name limit)`);
         return truncated;
     }
     
@@ -3876,9 +3917,9 @@ ${queryElements.join('\n')}
             return;
         }
         
-        // Extract Element ID (e.g., "mpAlarmXCore")
+        // Extract Element ID (e.g., "mpAlarmXCore") and truncate for 32-char limit
         const elementIdMatch = content.match(/<Element ID="([^"]+)" Type="mpalarmxcore">/);
-        const elementId = elementIdMatch ? elementIdMatch[1] : 'mpAlarmXCore';
+        const elementId = this.truncateElementId(elementIdMatch ? elementIdMatch[1] : 'mpAlarmXCore', 23); // 32 - '_Category'.length
         
         // Parse BySeverity section and convert to Mapping format
         const mappingEntries = this.convertBySeverityToMapping(bySeverityMatch[1]);
@@ -3963,9 +4004,9 @@ ${queryElements.join('\n')}
                 if (typeof historyContent === 'string') {
                     // Add the mapp.Gen group if not present - generate complete AS6 format
                     if (!historyContent.includes('mapp.Gen')) {
-                        // Extract the Element ID
+                        // Extract the Element ID and truncate for 32-char limit
                         const elemIdMatch = historyContent.match(/<Element ID="([^"]+)"/);
-                        const elemId = elemIdMatch ? elemIdMatch[1] : 'mpAlarmXHistory';
+                        const elemId = this.truncateElementId(elemIdMatch ? elemIdMatch[1] : 'mpAlarmXHistory');
                         
                         // Generate fresh AS6 format content
                         historyContent = `<?xml version="1.0" encoding="utf-8"?>
@@ -4334,6 +4375,34 @@ ${mappingGroups}
             }
         });
         
+        // Step 3.5: Truncate mpComGroup element IDs exceeding 32 characters
+        const mpComGroupTruncMap = new Map(); // oldId → newId
+        this.projectFiles.forEach((file, path) => {
+            if (path.toLowerCase().endsWith('.mpcomgroup') && typeof file.content === 'string') {
+                const idMatch = file.content.match(/<Element ID="([^"]+)" Type="mpcomgroup"/);
+                if (idMatch && idMatch[1].length > 32) {
+                    const oldId = idMatch[1];
+                    const newId = this.truncateElementId(oldId);
+                    mpComGroupTruncMap.set(oldId, newId);
+                    file.content = file.content.replace(
+                        new RegExp(`<Element ID="${oldId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`, 'g'),
+                        `<Element ID="${newId}"`
+                    );
+                    console.log(`  Truncated mpComGroup element ID: '${oldId}' → '${newId}'`);
+                }
+            }
+        });
+        
+        // Update parent references in parentMap to use truncated mpComGroup IDs
+        if (mpComGroupTruncMap.size > 0) {
+            this.mpComGroupParentMap.forEach((parentId, childId) => {
+                if (mpComGroupTruncMap.has(parentId)) {
+                    this.mpComGroupParentMap.set(childId, mpComGroupTruncMap.get(parentId));
+                }
+            });
+            console.log(`  Updated ${mpComGroupTruncMap.size} mpComGroup element ID(s) for 32-char limit`);
+        }
+        
         // Step 4: Inject Parent property into child mpcomgroup files (AS6 child-declares-parent format)
         let parentInjectedCount = 0;
         this.mpComGroupParentMap.forEach((parentId, childId) => {
@@ -4544,7 +4613,9 @@ ${mappingGroups}
      * @param {Map}    parentMap - mpComGroupParentMap (childId → parentId)
      * @returns {string} Full AS6 <Element …>…</Element> block
      */
-    convertMpDataRecorderElement(elemId, body, parentMap) {
+    convertMpDataRecorderElement(originalElemId, body, parentMap) {
+        const elemId = this.truncateElementId(originalElemId);
+
         // ---- 1. Extract AS4 DataRecorder properties ----
         const as4Props = {};
         const dataRecorderMatch = body.match(/<Group ID="DataRecorder">([\s\S]*?)<\/Group>/);
@@ -4575,7 +4646,7 @@ ${mappingGroups}
         }
 
         // ---- 3. Build mapp.Gen group ----
-        const parentId = parentMap.get(elemId) || '';
+        const parentId = parentMap.get(originalElemId) || '';
         const mappGen = `    <Group ID="mapp.Gen">
       <Property ID="Enable" Value="TRUE" />
       <Property ID="Parent"${parentId ? ` Value="${parentId}"` : ''} />
@@ -7860,43 +7931,92 @@ ${groups.join('\n')}
         // Create project folder in ZIP
         const projectFolder = zip.folder(projectName + '_AS6');
         
-        // Get list of technology package libraries whose files will be replaced with AS6 versions
-        // We'll skip ALL files from these libraries and fetch fresh AS6 versions instead
-        // Libraries without AS6 replacement files (as6LibVersion: null) will be copied as-is from AS4
+        // Build the set of technology package libraries that SHOULD be replaced with AS6 versions.
+        // Libraries without AS6 replacement files (as6LibVersion: null) are kept as-is from AS4.
         const techPackageLibraries = new Set();
         
         Object.entries(DeprecationDatabase.as6Format.libraryMapping).forEach(([libName, mapping]) => {
             const hasReplacementFiles = mapping.as6LibVersion !== null && mapping.as6LibVersion !== undefined;
             if ((mapping.techPackage || mapping.source === 'Library_2') && hasReplacementFiles) {
-                // Library has AS6 replacement files to fetch - skip AS4 version
                 techPackageLibraries.add(libName.toLowerCase());
             }
-            // Libraries with null version will NOT be added to techPackageLibraries,
-            // so their AS4 files will be copied as-is
         });
         
-        // Add all project files with their directory structure
-        // Skip files from technology package libraries - they'll be replaced with AS6 versions
-        // Libraries not in techPackageLibraries (including runtime libraries) are copied as-is
+        // ── Fetch AS6 library files FIRST, so we know which replacements succeeded ──
+        // This prevents the scenario where AS4 files are skipped but the fetch fails,
+        // leaving the converted project with missing libraries.
+        let as6LibraryFiles = new Map();
+        let successfullyFetchedLibraries = new Set(); // lowercase lib names that were actually fetched
+        
+        if (requiredPackages.size > 0) {
+            progressMessage.textContent = 'Fetching AS6 library files...';
+            progressBar.style.width = '5%';
+            progressPercent.textContent = '5%';
+            
+            console.log('=== Starting AS6 library fetch ===');
+            console.log('Required packages:', requiredPackages.size);
+            requiredPackages.forEach((pkg, name) => {
+                console.log(`  Package: ${name}, libraries: ${pkg.libraries.size}`);
+                pkg.libraries.forEach((lib, libName) => {
+                    console.log(`    - ${libName}: version=${lib.version}`);
+                });
+            });
+            
+            as6LibraryFiles = await this.fetchAS6LibraryFiles(requiredPackages, (fetched, total) => {
+                const pct = 5 + Math.floor((fetched / total) * 15);
+                progressBar.style.width = pct + '%';
+                progressPercent.textContent = pct + '%';
+            });
+            
+            console.log(`=== Fetched ${as6LibraryFiles.size} AS6 library files ===`);
+            if (as6LibraryFiles.size > 0) {
+                const fileList = Array.from(as6LibraryFiles.keys());
+                console.log('First 10 fetched files:', fileList.slice(0, 10));
+            }
+            
+            // Build set of library names for which we actually fetched replacement files
+            for (const [relativePath] of as6LibraryFiles) {
+                const libMatch = relativePath.match(/^Libraries[/\\]([^/\\]+)/i);
+                if (libMatch) {
+                    successfullyFetchedLibraries.add(libMatch[1].toLowerCase());
+                }
+            }
+            console.log(`Successfully fetched replacements for ${successfullyFetchedLibraries.size} libraries: ${Array.from(successfullyFetchedLibraries).join(', ')}`);
+            
+            // Warn about libraries that should have been replaced but weren't fetched
+            const missingReplacements = [];
+            for (const libName of techPackageLibraries) {
+                if (!successfullyFetchedLibraries.has(libName)) {
+                    missingReplacements.push(libName);
+                }
+            }
+            if (missingReplacements.length > 0) {
+                console.warn(`WARNING: ${missingReplacements.length} library replacements could not be fetched (AS4 versions will be kept): ${missingReplacements.join(', ')}`);
+            }
+        } else {
+            console.log('=== No required packages detected, skipping AS6 library fetch ===');
+        }
+        
+        // ── Add project files to ZIP, skipping ONLY libraries that were successfully fetched ──
+        progressMessage.textContent = 'Creating ZIP archive...';
         let fileCount = 0;
         let skippedLibraryFiles = 0;
         const totalFiles = this.projectFiles.size;
         this.projectFiles.forEach((file, path) => {
-            // Check if this file is inside a technology package library folder
             const pathParts = path.toLowerCase().split(/[/\\]/);
             const libIndex = pathParts.indexOf('libraries');
             let skipLibraryFile = false;
             
             if (libIndex >= 0 && libIndex < pathParts.length - 1) {
                 const libName = pathParts[libIndex + 1];
-                if (techPackageLibraries.has(libName)) {
+                // Only skip if we SUCCESSFULLY fetched AS6 replacement files for this library
+                if (successfullyFetchedLibraries.has(libName)) {
                     skipLibraryFile = true;
                     skippedLibraryFiles++;
                 }
             }
             
             if (!skipLibraryFile) {
-                // For binary files, pass the ArrayBuffer with binary option
                 if (file.isBinary) {
                     projectFolder.file(path, file.content, { binary: true });
                 } else {
@@ -7904,14 +8024,13 @@ ${groups.join('\n')}
                 }
             }
             fileCount++;
-            // Update progress to 50% during file addition
-            const percent = Math.floor((fileCount / totalFiles) * 50);
+            const percent = 20 + Math.floor((fileCount / totalFiles) * 30);
             progressBar.style.width = percent + '%';
             progressPercent.textContent = percent + '%';
         });
         
         if (skippedLibraryFiles > 0) {
-            console.log(`Skipped ${skippedLibraryFiles} files from technology package and runtime libraries`);
+            console.log(`Skipped ${skippedLibraryFiles} AS4 library files (replaced with AS6 versions)`);
         }
         
         // Add AS6 structural changes info
@@ -7945,44 +8064,16 @@ ${groups.join('\n')}
         const summary = this.generateConversionSummary();
         projectFolder.file('_conversion-summary.txt', summary);
         
-        // Fetch and add AS6 library files from bundled LibrariesForAS6 folder
-        if (requiredPackages.size > 0) {
-            progressMessage.textContent = 'Fetching AS6 library files...';
+        // Add fetched AS6 library files to the ZIP (in Logical/Libraries folder)
+        if (as6LibraryFiles.size > 0) {
+            progressMessage.textContent = 'Adding AS6 library files to ZIP...';
             progressBar.style.width = '56%';
             progressPercent.textContent = '56%';
             
-            console.log('=== Starting AS6 library fetch ===');
-            console.log('Required packages:', requiredPackages.size);
-            requiredPackages.forEach((pkg, name) => {
-                console.log(`  Package: ${name}, libraries: ${pkg.libraries.size}`);
-                pkg.libraries.forEach((lib, libName) => {
-                    console.log(`    - ${libName}: version=${lib.version}`);
-                });
-            });
-            
-            const as6LibraryFiles = await this.fetchAS6LibraryFiles(requiredPackages, (fetched, total) => {
-                const pct = 56 + Math.floor((fetched / total) * 4);
-                progressBar.style.width = pct + '%';
-                progressPercent.textContent = pct + '%';
-            });
-            
-            console.log(`=== Fetched ${as6LibraryFiles.size} AS6 library files ===`);
-            if (as6LibraryFiles.size > 0) {
-                // Show first 10 files that were fetched
-                const fileList = Array.from(as6LibraryFiles.keys());
-                console.log('First 10 fetched files:', fileList.slice(0, 10));
-            }
-            
-            // Add AS6 library files to the ZIP (in Logical/Libraries folder)
-            // Need to determine the project folder prefix from existing files
-            // Look for the actual Logical/Libraries path, not SafeLOGIC paths
+            // Determine the project folder prefix from existing files
             let projectFolderPrefix = '';
             for (const [path] of this.projectFiles) {
-                // Skip SafeLOGIC paths - they have their own Logical folder structure
-                if (path.toLowerCase().includes('safelogic')) {
-                    continue;
-                }
-                // Look for Logical/Libraries specifically to find the correct project root
+                if (path.toLowerCase().includes('safelogic')) continue;
                 const logicalLibrariesMatch = path.match(/^(.*?)Logical[/\\]Libraries[/\\]/i);
                 if (logicalLibrariesMatch) {
                     projectFolderPrefix = logicalLibrariesMatch[1];
@@ -7990,12 +8081,9 @@ ${groups.join('\n')}
                 }
             }
             
-            // Fallback: if no Logical/Libraries found, look for just Logical (but not in SafeLOGIC)
             if (!projectFolderPrefix) {
                 for (const [path] of this.projectFiles) {
-                    if (path.toLowerCase().includes('safelogic')) {
-                        continue;
-                    }
+                    if (path.toLowerCase().includes('safelogic')) continue;
                     const logicalMatch = path.match(/^(.*?)Logical[/\\]/i);
                     if (logicalMatch) {
                         projectFolderPrefix = logicalMatch[1];
@@ -8006,38 +8094,30 @@ ${groups.join('\n')}
             
             console.log(`Project folder prefix: "${projectFolderPrefix}"`);
             
-            // Build a set of existing library paths that are NOT being replaced with AS6 versions
-            // Libraries in techPackageLibraries are being replaced, so they should NOT be in existingLibraryPaths
+            // Build set of custom library paths (NOT being replaced) to avoid overwriting them
             const existingLibraryPaths = new Set();
             for (const [path] of this.projectFiles) {
                 const pathLower = path.toLowerCase();
                 if (pathLower.includes('/libraries/') || pathLower.includes('\\libraries\\')) {
-                    // Extract the relative library path (e.g., "Libraries/AsBrStr/...")
                     const libMatch = pathLower.match(/libraries[/\\]([^/\\]+)/i);
                     if (libMatch) {
                         const libName = libMatch[1].toLowerCase();
-                        // Only mark as "existing" if this library is NOT being replaced with an AS6 version
-                        // Libraries in techPackageLibraries are being replaced, so we should add the AS6 version
                         if (!techPackageLibraries.has(libName)) {
                             existingLibraryPaths.add(libName);
                         }
                     }
                 }
             }
-            console.log(`Existing libraries NOT being replaced: ${Array.from(existingLibraryPaths).join(', ')}`);
-            console.log(`Libraries being replaced with AS6 versions: ${Array.from(techPackageLibraries).join(', ')}`);
             
             let addedLibFiles = 0;
             let skippedLibFiles = 0;
             for (const [relativePath, fileData] of as6LibraryFiles) {
-                // Check if this library already exists in the project AND is NOT being replaced
                 const libMatch = relativePath.match(/^Libraries[/\\]([^/\\]+)/i);
                 const libName = libMatch ? libMatch[1].toLowerCase() : null;
                 
                 if (libName && existingLibraryPaths.has(libName)) {
-                    // Skip - library already exists in project and is NOT being replaced
                     if (skippedLibFiles < 3) {
-                        console.log(`  Skipping (already exists and not being replaced): ${relativePath}`);
+                        console.log(`  Skipping (custom library, not being replaced): ${relativePath}`);
                     }
                     skippedLibFiles++;
                     continue;
@@ -8055,21 +8135,15 @@ ${groups.join('\n')}
                 addedLibFiles++;
             }
             console.log(`Added ${addedLibFiles} AS6 library files to ZIP, skipped ${skippedLibFiles} (custom libraries not being replaced)`);
+        } else if (requiredPackages.size > 0) {
+            // Required packages were detected but no files were fetched - show warning
+            const missingLibs = Array.from(techPackageLibraries).join(', ');
+            console.error('WARNING: AS6 library files could not be fetched. AS4 library versions have been preserved as fallback.');
+            console.error('Libraries that could not be updated:', missingLibs);
+            console.error('Make sure you are running this tool via a web server (not file:// protocol).');
             
-            // Show warning if no library files were added despite having packages to fetch
-            if (addedLibFiles === 0 && as6LibraryFiles.size === 0) {
-                const missingLibs = Array.from(techPackageLibraries).join(', ');
-                console.error('WARNING: No AS6 library files were fetched. The converted project may be missing required libraries.');
-                console.error('Missing libraries:', missingLibs);
-                console.error('Please ensure you are running this tool via a web server (not file:// protocol).');
-                console.error('Check the browser console for any fetch errors.');
-                
-                // Add a visible note to the conversion report
-                const warningNote = `\n\n=== WARNING ===\nNo AS6 library files were fetched. The following libraries may be missing:\n${missingLibs}\n\nPlease ensure you are running this tool via a web server and check the browser console for errors.`;
-                projectFolder.file('_conversion-summary.txt', summary + warningNote);
-            }
-        } else {
-            console.log('=== No required packages, skipping AS6 library fetch ===');
+            const warningNote = `\n\n=== WARNING ===\nAS6 library files could not be fetched. The AS4 library versions have been preserved as fallback.\nThe following libraries were NOT updated to AS6 versions:\n${missingLibs}\n\nTo fix: ensure you are running this tool via a web server and check the browser console for errors.`;
+            projectFolder.file('_conversion-summary.txt', summary + warningNote);
         }
         
         // Generate ZIP file
