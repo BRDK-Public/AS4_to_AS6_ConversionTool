@@ -85,8 +85,11 @@ const DeprecationDatabase = {
             'mappMotion': { 
                 as4Version: '5.24.1', 
                 as6Version: '6.0.0', 
-                required: false
-                // Note: MpAxis, MpCnc, MpRobotics, McAcpAx, McAxis, McBase are libraries, not subVersions
+                required: false,
+                // McDriveLog is a Module (not a Library) — always bundled with mappMotion.
+                // It won't appear in Package.pkg/.sw so collectUsedLibraries() won't find it.
+                // It must be merged into subVersions whenever mappMotion is output.
+                modules: { McDriveLog: '6.0.0' }
             },
             'mappControl': { 
                 as4Version: '5.24.1', 
@@ -375,12 +378,27 @@ const DeprecationDatabase = {
             'ViBase': { techPackage: 'mappVision', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
             
             // mappMotion (6.0.0) - Motion control
-            'MpAxis': { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
-            'MpCnc': { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
-            'MpRobotics': { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
-            'McAcpAx': { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
-            'McAxis': { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
-            'McBase': { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
+            // Libraries (from LibrariesForAS6/TechnologyPackages/mappMotion/6.0.0/Library/)
+            'MpAxis':    { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
+            'MpCnc':     { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
+            'MpRobotics':{ techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
+            'MpPick':    { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
+            'MpTool':    { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
+            'McAcpAx':   { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
+            'McAcpPar':  { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
+            'McAcpTrak': { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
+            'McAxis':    { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
+            'McAxGroup': { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
+            'McBase':    { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
+            'McDS402Ax': { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
+            'McPathGen': { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
+            'McProgInt': { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
+            'McPureVAx': { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
+            'McStpAx':   { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
+            'McTrkPath': { techPackage: 'mappMotion', as6Version: '6.0.0', as6LibVersion: '6.0.0' },
+            // Note: McDriveLog is a Module (not a Library) — it does NOT appear in Package.pkg/.sw files.
+            // It is therefore not in libraryMapping. Instead it is always injected as a subVersion
+            // via the 'modules' property on the 'mappMotion' technologyPackages entry above.
             
             // mappControl (6.1.0) - Advanced control / Temperature / Hydraulics
             // Mp* libraries (mapp control components)
@@ -1585,17 +1603,6 @@ const DeprecationDatabase = {
             eol: null
         },
 
-        // Bus Modules
-        {
-            id: "hw_x20bc0083",
-            name: "X20BC0083",
-            type: "bus_controller",
-            severity: "warning",
-            description: "Bus controller - limited support",
-            replacement: { name: "X20BC0087", description: "Modern bus controller" },
-            notes: "Support continues with limited updates.",
-            eol: "2027-12-31"
-        }
     ],
 
     // ==========================================
@@ -1704,7 +1711,7 @@ const DeprecationDatabase = {
      */
     isDeprecatedHardware(moduleName) {
         return this.hardware.some(hw => 
-            moduleName.toLowerCase().includes(hw.name.toLowerCase())
+            moduleName.toLowerCase() === hw.name.toLowerCase()
         );
     },
 
@@ -1769,20 +1776,54 @@ const DeprecationDatabase = {
      */
     extractTechnologyPackages(as4Content) {
         const packages = [];
-        const pkgPattern = /<(\w+)\s+Version="([^"]+)"\s*\/>/g;
-        let match;
-        
+
         // Find TechnologyPackages section
         const techSection = as4Content.match(/<TechnologyPackages>([\s\S]*?)<\/TechnologyPackages>/);
-        if (techSection) {
-            while ((match = pkgPattern.exec(techSection[1])) !== null) {
-                packages.push({
-                    name: match[1],
-                    version: match[2]
-                });
+        if (!techSection) return packages;
+
+        const content = techSection[1];
+        let depth = 0;
+
+        // Process line by line so we can track nesting depth.
+        // This correctly handles three AS4 formats:
+        //   Format 1 (simple):   <PackageName Version="x.y.z" />
+        //   Format 2 (children): <PackageName Version="x.y.z"> ... </PackageName>
+        //   Format 3 (attrs):    <PackageName SubAttr="x" Version="x.y.z" />
+        // Only elements at depth 0 (direct children of TechnologyPackages) are returned.
+        // Child subVersion elements (e.g. <McAcpPar Version="5.23.1" /> inside mappMotion)
+        // are skipped — their versions are rebuilt from libraryMapping in convertTechnologyPackages.
+        const lines = content.split('\n');
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+
+            // Closing tag → decrease depth, nothing to collect
+            if (/^<\/\w+>/.test(trimmed)) {
+                depth--;
+                continue;
+            }
+
+            // Opening or self-closing tag: <TagName key="val" ... /?>
+            const openMatch = trimmed.match(/^<(\w+)((?:\s+[\w.]+="[^"]*")*)\s*(\/?)>/);
+            if (openMatch) {
+                const tagName = openMatch[1];
+                const attrs   = openMatch[2];
+                const isSelfClosing = openMatch[3] === '/';
+
+                if (depth === 0) {
+                    // Direct child of TechnologyPackages — extract Version
+                    const versionMatch = attrs.match(/\bVersion="([^"]+)"/);
+                    if (versionMatch) {
+                        packages.push({ name: tagName, version: versionMatch[1] });
+                    }
+                }
+                // Only increase depth for non-self-closing opening tags
+                if (!isSelfClosing) {
+                    depth++;
+                }
             }
         }
-        
+
         return packages;
     },
 
@@ -1825,7 +1866,13 @@ const DeprecationDatabase = {
                         }
                     });
                     
-                    // Only set subVersions if we found any libraries for this package
+                    // Always merge in built-in module subVersions for this package (e.g. McDriveLog for mappMotion)
+                    const pkgDef = tpRef[name];
+                    if (pkgDef && pkgDef.modules) {
+                        Object.assign(packageLibs, pkgDef.modules);
+                    }
+
+                    // Only set subVersions if we found any libraries/modules for this package
                     if (Object.keys(packageLibs).length > 0) {
                         subVersions = packageLibs;
                     }
@@ -1867,7 +1914,13 @@ const DeprecationDatabase = {
                             }
                         });
                         
-                        // Only set subVersions if we found any libraries for this package
+                        // Always merge in built-in module subVersions for this package
+                        const newPkgDef = tpRef[name];
+                        if (newPkgDef && newPkgDef.modules) {
+                            Object.assign(packageLibs, newPkgDef.modules);
+                        }
+
+                        // Only set subVersions if we found any libraries/modules for this package
                         if (Object.keys(packageLibs).length > 0) {
                             subVersions = packageLibs;
                         }

@@ -188,6 +188,18 @@ Key changes AS4→AS6:
 **Cause:** Static subVersions included libraries not in project
 **Solution:** Build subVersions dynamically from `collectUsedLibraries()`
 
+### Issue: "version n.d not in valid version range" for McDriveLog
+**Cause:** `McDriveLog` is a Module (not a Library) — never in `Package.pkg`/`.sw`, so not found by `collectUsedLibraries()`. AS4 child format passes it through with AS4 version.
+**Solution:** Add `modules: { McDriveLog: '6.0.0' }` to `mappMotion` in `technologyPackages`. `convertTechnologyPackages()` merges modules into subVersions.
+
+### Issue: "version 5.23.x not in valid version range" for mappMotion sublibraries
+**Cause:** Some AS4 projects use non-self-closing TechnologyPackages format (`<mappMotion Version="x"><McAcpPar ... /></mappMotion>`). Old regex only matched self-closing tags, so child elements were treated as top-level packages with AS4 versions.
+**Solution:** Replaced regex in `extractTechnologyPackages()` with a depth-tracking line parser. Child elements at depth > 0 are ignored.
+
+### Issue: X20BC0083 incorrectly replaced with X20BC0087
+**Cause:** `X20BC0083` was erroneously listed in the `deprecatedHardware` array. Also `isDeprecatedHardware()` used `.includes()` causing false positives for variant names.
+**Solution:** Remove entry from `deprecatedHardware`. Change `isDeprecatedHardware()` to use exact `===` matching.
+
 ### Issue: .apj not converted to AS6
 **Cause:** Conversion wasn't auto-applied during analysis
 **Solution:** Added `autoApplyProjectFileConversion()` in `runAnalysis()`
@@ -212,6 +224,26 @@ Technology packages are in:
 `LibrariesForAS6/TechnologyPackages/[PackageName]/[Version]/`
 
 ## Recent Changes (February 2026)
+
+23. **Fixed McDriveLog always emitted as mappMotion subVersion at 6.0.0**
+    - `McDriveLog` is a **Module** (lives in `mappMotion/Modules/`), not a Library
+    - It never appears in `Package.pkg`/`.sw`, so `collectUsedLibraries()` can never find it
+    - Added `modules: { McDriveLog: '6.0.0' }` property to the `mappMotion` entry in `technologyPackages`
+    - `convertTechnologyPackages()` now merges `modules` into subVersions for both existing and new AS6 packages
+    - Result: `McDriveLog="6.0.0"` is always output on the `<mappMotion>` element
+
+22. **Fixed technology package extraction for non-self-closing AS4 format**
+    - Some AS4 `.apj` files use child-element format: `<mappMotion Version="5.x"><McAcpPar Version="5.23.1" /></mappMotion>`
+    - Old regex `/<(\w+)\s+Version="([^"]+)"\s*\/>/g` only matched self-closing tags (`/>`)
+    - Child elements like `<McAcpPar>`, `<McDriveLog>` were being read as top-level packages with their AS4 versions, causing "not in valid version range" errors
+    - Rewrote `extractTechnologyPackages()` with a line-by-line depth tracker
+    - Only elements at depth 0 (direct children of `<TechnologyPackages>`) are extracted; children at depth 1+ are skipped
+    - Added all 11 missing mappMotion libraries to `libraryMapping`: `McAcpPar`, `McAcpTrak`, `McAxGroup`, `McDS402Ax`, `McPathGen`, `McProgInt`, `McPureVAx`, `McStpAx`, `McTrkPath`, `MpPick`, `MpTool`
+
+21. **Fixed X20BC0083 incorrectly flagged as deprecated hardware**
+    - `X20BC0083` was listed in `deprecatedHardware` array with replacement `X20BC0087` — this is wrong, the module is fully supported in AS6
+    - Removed the entry entirely from the deprecated hardware list
+    - Also fixed `isDeprecatedHardware()` to use exact matching (`===`) instead of substring matching (`.includes()`), which was causing false positives for variant module names like `X20BC0083ab`, `X20BC0083k`, etc.
 
 20. **Added motion type migration for McAcpAx → McAxis library types** (v1.1.2)
     - New `motionTypeMappings` array in `deprecation-database.js`

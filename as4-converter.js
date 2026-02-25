@@ -1310,8 +1310,17 @@ class AS4Converter {
             // Auto-apply mappServices AlarmX conversion (split core file to AS6 format)
             this.autoApplyMappServicesConversion();
             
+            // Auto-apply MpDataRecorder conversion (restructure DataRecorder group to AS6 format)
+            this.autoApplyMpDataRecorderConversion();
+            
             // Auto-apply mappView configuration updates (startup user to anonymous)
             this.autoApplyMappViewConfigConversion();
+            
+            // Auto-fix OPC UA server ConnectionPolicy in .uaserver files (must be "Current mapp view user")
+            this.autoApplyUaServerConnectionPolicy();
+            
+            // Auto-fix SecurityPolicy "None" enabled in .uacfg files (required for mappView OPC UA access)
+            this.autoApplyUaCfgSecurityPolicyNone();
             
             // Auto-remove deprecated function blocks (MpAlarmXAcknowledgeAll, etc.)
             this.autoApplyDeprecatedFunctionBlockRemoval();
@@ -1331,6 +1340,9 @@ class AS4Converter {
             
             // Auto-remove MpWebXs technology package (not supported in AS6)
             this.autoRemoveMpWebXs();
+            
+            // Auto-add BR_Engineer role to all users in .user files (required for mappView OPC UA PV access)
+            this.autoApplyUserBREngineerRole();
             
             // Update UI
             this.displayAnalysisResults();
@@ -3182,7 +3194,7 @@ class AS4Converter {
     <Group ID="Security">
       <Group ID="MessageSecurity">
         <Group ID="SecurityPolicies">
-          <Property ID="None" Value="0" />
+          <Property ID="None" Value="1" />
           <Property ID="Basic128Rsa15" Value="0" />
           <Property ID="Basic256" Value="0" />
           <Property ID="Aes128Sha256RsaOaep" Value="1" />
@@ -3516,8 +3528,8 @@ ${roleGroups}
         
         console.log(`  Found ${elements.length} Element node(s): ${elements.map(e => e.id).join(', ')}`);
         
-        // Look up parent groups from mpcomgroup files
-        const parentGroupMap = this.findMpComGroupParents();
+        // Look up parent groups from mpcomgroup files (use stored map - Linking/Subnodes already stripped)
+        const parentGroupMap = this.mpComGroupParentMap || this.findMpComGroupParents();
         
         // Generate the core file with all Elements (references to lists and categories)
         const coreElements = [];
@@ -3526,8 +3538,9 @@ ${roleGroups}
         const queryElements = [];
         
         for (const elem of elements) {
-            const elemId = elem.id;
-            const parentGroup = parentGroupMap.get(elemId);
+            const originalElemId = elem.id;
+            const elemId = this.truncateElementId(elem.id, 23); // 32 - '_Category'.length
+            const parentGroup = parentGroupMap.get(originalElemId);
             
             // Extract Configuration content (alarm definitions)
             const configMatch = elem.content.match(/<Group ID="mapp\.AlarmX\.Core\.Configuration">([\s\S]*?)<\/Group>(?=\s*<Group ID="mapp\.AlarmX\.Core\.Snippets">|\s*$)/);
@@ -3743,7 +3756,7 @@ ${queryElements.join('\n')}
                 // Add the mapp.Gen group if not present
                 if (!historyContent.includes('mapp.Gen')) {
                     const elemIdMatch = historyContent.match(/<Element ID="([^"]+)"/);
-                    const elemId = elemIdMatch ? elemIdMatch[1] : 'mpAlarmXHistory';
+                    const elemId = this.truncateElementId(elemIdMatch ? elemIdMatch[1] : 'mpAlarmXHistory');
                     
                     historyContent = `<?xml version="1.0" encoding="utf-8"?>
 <Configuration>
@@ -3788,6 +3801,46 @@ ${queryElements.join('\n')}
         }
         const truncated = baseName.substring(0, maxLength);
         console.log(`  Truncated base name from '${baseName}' to '${truncated}' (10-char limit)`);
+        return truncated;
+    }
+
+    /**
+     * Truncate a mapp component element ID so that derived object names
+     * stay within the 32-character AS6 object name limit.
+     *
+     * For components that generate suffixed names (_List, _Category, _Query)
+     * pass maxLength = 32 − longestSuffixLength (e.g. 23 for AlarmX).
+     * For components without suffixes, use the default maxLength = 32.
+     *
+     * Prefers truncating at a camelCase boundary (uppercase letter) or underscore
+     * for a more readable result, falling back to a hard cut when no good boundary exists.
+     *
+     * @param {string} elemId    - Original element ID from AS4
+     * @param {number} maxLength - Maximum allowed length for the base ID (default 32)
+     * @returns {string} Element ID that is at most maxLength characters
+     */
+    truncateElementId(elemId, maxLength = 32) {
+        if (elemId.length <= maxLength) {
+            return elemId;
+        }
+
+        const candidate = elemId.substring(0, maxLength);
+
+        // Walk backwards looking for a camelCase transition or underscore boundary
+        let cutAt = -1;
+        for (let i = candidate.length - 1; i > Math.floor(maxLength / 2); i--) {
+            const c = candidate[i];
+            if (c === '_' || (c >= 'A' && c <= 'Z')) {
+                cutAt = i;
+                break;
+            }
+        }
+
+        // Use boundary if found, otherwise hard-cut at maxLength
+        // Strip any trailing underscore left by a boundary cut (e.g. "Foo_Bar_" → "Foo_Bar")
+        const truncated = (cutAt > 0 ? candidate.substring(0, cutAt) : candidate).replace(/_+$/, '') || candidate;
+
+        console.log(`  Truncated element ID from '${elemId}' to '${truncated}' (32-char name limit)`);
         return truncated;
     }
     
@@ -3864,9 +3917,9 @@ ${queryElements.join('\n')}
             return;
         }
         
-        // Extract Element ID (e.g., "mpAlarmXCore")
+        // Extract Element ID (e.g., "mpAlarmXCore") and truncate for 32-char limit
         const elementIdMatch = content.match(/<Element ID="([^"]+)" Type="mpalarmxcore">/);
-        const elementId = elementIdMatch ? elementIdMatch[1] : 'mpAlarmXCore';
+        const elementId = this.truncateElementId(elementIdMatch ? elementIdMatch[1] : 'mpAlarmXCore', 23); // 32 - '_Category'.length
         
         // Parse BySeverity section and convert to Mapping format
         const mappingEntries = this.convertBySeverityToMapping(bySeverityMatch[1]);
@@ -3951,9 +4004,9 @@ ${queryElements.join('\n')}
                 if (typeof historyContent === 'string') {
                     // Add the mapp.Gen group if not present - generate complete AS6 format
                     if (!historyContent.includes('mapp.Gen')) {
-                        // Extract the Element ID
+                        // Extract the Element ID and truncate for 32-char limit
                         const elemIdMatch = historyContent.match(/<Element ID="([^"]+)"/);
-                        const elemId = elemIdMatch ? elemIdMatch[1] : 'mpAlarmXHistory';
+                        const elemId = this.truncateElementId(elemIdMatch ? elemIdMatch[1] : 'mpAlarmXHistory');
                         
                         // Generate fresh AS6 format content
                         historyContent = `<?xml version="1.0" encoding="utf-8"?>
@@ -4279,6 +4332,23 @@ ${mappingGroups}
     autoApplyMpComGroupConversion() {
         console.log('Converting MpComGroup configuration to AS6 format...');
         
+        // Step 1: Build element ID → file info map for all mpcomgroup files
+        const elementMap = new Map(); // elementId -> { path, file }
+        this.projectFiles.forEach((file, path) => {
+            if (path.toLowerCase().endsWith('.mpcomgroup') && typeof file.content === 'string') {
+                const idMatch = file.content.match(/<Element ID="([^"]+)" Type="mpcomgroup"/);
+                if (idMatch) {
+                    elementMap.set(idMatch[1], { path, file });
+                }
+            }
+        });
+        
+        // Step 2: Read parent-child relationships BEFORE stripping Linking/Subnodes
+        // This map is also stored for later use by AlarmX conversion
+        this.mpComGroupParentMap = this.findMpComGroupParents();
+        console.log(`  Found ${this.mpComGroupParentMap.size} parent-child relationship(s) in MpComGroup files`);
+        
+        // Step 3: Strip Linking/Subnodes from all files (AS4 parent-declares-children format)
         let convertedCount = 0;
         
         this.projectFiles.forEach((file, path) => {
@@ -4290,7 +4360,7 @@ ${mappingGroups}
                 if (converted !== file.content) {
                     file.content = converted;
                     convertedCount++;
-                    console.log(`  Converted: ${path}`);
+                    console.log(`  Stripped Linking/Subnodes: ${path}`);
                     
                     this.analysisResults.push({
                         severity: 'info',
@@ -4299,13 +4369,76 @@ ${mappingGroups}
                         description: 'Removed Linking/Subnodes groups from MpComGroup configuration',
                         file: path,
                         autoFixed: true,
-                        details: ['Removed Linking/Subnodes groups, kept Selector elements']
+                        details: ['Removed Linking/Subnodes groups (AS4 parent-declares-children format)']
                     });
                 }
             }
         });
         
-        console.log(`Converted ${convertedCount} MpComGroup file(s) to AS6 format`);
+        // Step 3.5: Truncate mpComGroup element IDs exceeding 32 characters
+        const mpComGroupTruncMap = new Map(); // oldId → newId
+        this.projectFiles.forEach((file, path) => {
+            if (path.toLowerCase().endsWith('.mpcomgroup') && typeof file.content === 'string') {
+                const idMatch = file.content.match(/<Element ID="([^"]+)" Type="mpcomgroup"/);
+                if (idMatch && idMatch[1].length > 32) {
+                    const oldId = idMatch[1];
+                    const newId = this.truncateElementId(oldId);
+                    mpComGroupTruncMap.set(oldId, newId);
+                    file.content = file.content.replace(
+                        new RegExp(`<Element ID="${oldId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`, 'g'),
+                        `<Element ID="${newId}"`
+                    );
+                    console.log(`  Truncated mpComGroup element ID: '${oldId}' → '${newId}'`);
+                }
+            }
+        });
+        
+        // Update parent references in parentMap to use truncated mpComGroup IDs
+        if (mpComGroupTruncMap.size > 0) {
+            this.mpComGroupParentMap.forEach((parentId, childId) => {
+                if (mpComGroupTruncMap.has(parentId)) {
+                    this.mpComGroupParentMap.set(childId, mpComGroupTruncMap.get(parentId));
+                }
+            });
+            console.log(`  Updated ${mpComGroupTruncMap.size} mpComGroup element ID(s) for 32-char limit`);
+        }
+        
+        // Step 4: Inject Parent property into child mpcomgroup files (AS6 child-declares-parent format)
+        let parentInjectedCount = 0;
+        this.mpComGroupParentMap.forEach((parentId, childId) => {
+            const childInfo = elementMap.get(childId);
+            if (!childInfo) {
+                console.log(`  Skipping parent injection for '${childId}' - no matching mpcomgroup file found (may be a non-group component)`);
+                return;
+            }
+            
+            const { path, file } = childInfo;
+            
+            // Skip if Parent is already set
+            if (file.content.includes('<Property ID="Parent"')) {
+                console.log(`  Parent already set in ${childId}, skipping`);
+                return;
+            }
+            
+            const updatedContent = this.injectMpComGroupParent(file.content, parentId);
+            if (updatedContent !== file.content) {
+                file.content = updatedContent;
+                parentInjectedCount++;
+                console.log(`  Injected Parent="${parentId}" into ${childId} (${path})`);
+                
+                this.analysisResults.push({
+                    severity: 'info',
+                    category: 'mappservices',
+                    name: 'MpComGroup Parent Reference Added',
+                    description: `Set parent of '${childId}' to '${parentId}' (AS6 reversed hierarchy)`,
+                    file: path,
+                    autoFixed: true,
+                    details: [`Added mapp.Gen/Parent = "${parentId}"`]
+                });
+            }
+        });
+        
+        console.log(`Converted ${convertedCount} MpComGroup file(s), injected parent into ${parentInjectedCount} child file(s)`);
     }
     
     /**
@@ -4331,6 +4464,36 @@ ${mappingGroups}
         result = result.replace(/\n\s*\n\s*\n/g, '\n\n');
         
         return result;
+    }
+
+    /**
+     * Inject a Parent property into an mpcomgroup file content.
+     * In AS6, child components declare their parent (reversed from AS4 where parent declared children).
+     * Adds <Group ID="mapp.Gen"><Property ID="Parent" Value="parentId" /></Group>
+     */
+    injectMpComGroupParent(content, parentId) {
+        // If there's already a mapp.Gen group, add Parent property inside it
+        if (content.includes('<Group ID="mapp.Gen">')) {
+            return content.replace(
+                /(<Group ID="mapp\.Gen">)/,
+                `$1\n      <Property ID="Parent" Value="${parentId}" />`
+            );
+        }
+        
+        // Insert mapp.Gen group with Parent before </Element>
+        if (content.includes('</Element>')) {
+            const parentGroup = `    <Group ID="mapp.Gen">\n      <Property ID="Parent" Value="${parentId}" />\n    </Group>`;
+            return content.replace(
+                '</Element>',
+                `${parentGroup}\n  </Element>`
+            );
+        }
+        
+        // Handle self-closing Element: <Element ID="..." Type="mpcomgroup" />
+        return content.replace(
+            /(<Element ID="[^"]+" Type="mpcomgroup")\s*\/>/,
+            `$1>\n    <Group ID="mapp.Gen">\n      <Property ID="Parent" Value="${parentId}" />\n    </Group>\n  </Element>`
+        );
     }
 
     /**
@@ -4376,6 +4539,470 @@ ${mappingGroups}
         
         if (updatedCount > 0) {
             console.log(`MappView configuration updated for ${updatedCount} file(s)`);
+        }
+    }
+
+    /**
+     * Auto-apply MpDataRecorder conversion from AS4 to AS6 format.
+     *
+     * AS4 → AS6 changes per Element:
+     *  1. Add <Group ID="mapp.Gen"> with Enable=TRUE and Parent (from mpComGroupParentMap)
+     *  2. Restructure <Group ID="DataRecorder">:
+     *     - Add Memory Selector (DRAM default)
+     *     - Move SaveInitialValues / DecimalDigits into Record sub-group with defaults
+     *     - Move MaxFileSize / FileNamePattern into File sub-group with defaults
+     *  3. Expand Alarms section: always emit 3 default alarms (RecordingCompleted,
+     *     RecordingAborted, LimitViolated), merging any user-customised properties from AS4.
+     */
+    autoApplyMpDataRecorderConversion() {
+        console.log('Converting MpDataRecorder configuration to AS6 format...');
+
+        const parentMap = this.mpComGroupParentMap || new Map();
+        let convertedFileCount = 0;
+
+        this.projectFiles.forEach((file, path) => {
+            if (!path.toLowerCase().endsWith('.mpdatarecorder') ||
+                file.isBinary || typeof file.content !== 'string') {
+                return;
+            }
+
+            // Parse all Element nodes in this file
+            const elementPattern = /<Element ID="([^"]+)" Type="mpdatarecorder">([\s\S]*?)<\/Element>/g;
+            let match;
+            const elements = [];
+
+            while ((match = elementPattern.exec(file.content)) !== null) {
+                elements.push({ id: match[1], body: match[2], raw: match[0] });
+            }
+
+            if (elements.length === 0) return;
+
+            // Convert each element
+            const convertedElements = elements.map(elem =>
+                this.convertMpDataRecorderElement(elem.id, elem.body, parentMap)
+            );
+
+            // Rebuild file
+            const newContent = `<?xml version="1.0" encoding="utf-8"?>\n<Configuration>\n${convertedElements.join('\n')}\n</Configuration>`;
+
+            if (newContent !== file.content) {
+                file.content = newContent;
+                convertedFileCount++;
+                console.log(`  Converted ${elements.length} element(s) in ${path}`);
+
+                this.analysisResults.push({
+                    severity: 'info',
+                    category: 'mappservices',
+                    name: 'MpDataRecorder Converted to AS6 Format',
+                    description: `Restructured ${elements.length} MpDataRecorder element(s) to AS6 format`,
+                    file: path,
+                    autoFixed: true,
+                    details: elements.map(e => `Converted element "${e.id}"`)
+                });
+            }
+        });
+
+        console.log(`Converted ${convertedFileCount} MpDataRecorder file(s) to AS6 format`);
+    }
+
+    /**
+     * Convert a single MpDataRecorder Element from AS4 to AS6 structure.
+     *
+     * @param {string} elemId   - Element ID (e.g. "mpLoggerTemperatures")
+     * @param {string} body     - Inner XML of the Element (between <Element …> and </Element>)
+     * @param {Map}    parentMap - mpComGroupParentMap (childId → parentId)
+     * @returns {string} Full AS6 <Element …>…</Element> block
+     */
+    convertMpDataRecorderElement(originalElemId, body, parentMap) {
+        const elemId = this.truncateElementId(originalElemId);
+
+        // ---- 1. Extract AS4 DataRecorder properties ----
+        const as4Props = {};
+        const dataRecorderMatch = body.match(/<Group ID="DataRecorder">([\s\S]*?)<\/Group>/);
+        if (dataRecorderMatch) {
+            const propPattern = /<Property ID="([^"]+)" Value="([^"]*)" \/>/g;
+            let pm;
+            while ((pm = propPattern.exec(dataRecorderMatch[1])) !== null) {
+                as4Props[pm[1]] = pm[2];
+            }
+        }
+
+        // ---- 2. Extract AS4 Alarms section ----
+        const as4Alarms = new Map(); // index (string) → { properties }
+        const alarmsMatch = body.match(/<Selector ID="Alarms" Value="MpAlarmX">([\s\S]*?)<\/Selector>/);
+        if (alarmsMatch) {
+            const alarmGroupPattern = /<Group ID="\[(\d+)\]">([\s\S]*?)<\/Group>/g;
+            let ag;
+            while ((ag = alarmGroupPattern.exec(alarmsMatch[1])) !== null) {
+                const idx = ag[1];
+                const props = {};
+                const apPattern = /<Property ID="([^"]+)"\s*(?:Value="([^"]*)")?\s*\/>/g;
+                let ap;
+                while ((ap = apPattern.exec(ag[2])) !== null) {
+                    props[ap[1]] = ap[2] !== undefined ? ap[2] : '';
+                }
+                as4Alarms.set(idx, props);
+            }
+        }
+
+        // ---- 3. Build mapp.Gen group ----
+        const parentId = parentMap.get(originalElemId) || '';
+        const mappGen = `    <Group ID="mapp.Gen">
+      <Property ID="Enable" Value="TRUE" />
+      <Property ID="Parent"${parentId ? ` Value="${parentId}"` : ''} />
+    </Group>`;
+
+        // ---- 4. Build restructured DataRecorder group ----
+        const maxFileSize = as4Props['MaxFileSize'] || '1000';
+        const fileNamePattern = as4Props['FileNamePattern'] || 'DataRecorder%Y_%m_%d_%H_%M_%S.csv';
+        const saveInitialValues = as4Props['SaveInitialValues'] || 'TRUE';
+        const decimalDigits = as4Props['DecimalDigits'] || '2';
+
+        const dataRecorder = `    <Group ID="DataRecorder">
+      <Selector ID="Memory" Value="DRAM">
+        <Property ID="BufferSize" Value="100" />
+        <Property ID="Interval" Value="10000" />
+      </Selector>
+      <Group ID="Record">
+        <Property ID="AutoSave" Value="TRUE" />
+        <Property ID="SaveInitialValues" Value="${saveInitialValues}" />
+        <Property ID="DecimalDigits" Value="${decimalDigits}" />
+        <Property ID="MeasurementSystem" Value="EU" />
+        <Property ID="UnitDisplay" Value="0" />
+      </Group>
+      <Group ID="File">
+        <Property ID="MaxNumberOfFiles" Value="1" />
+        <Property ID="MaxFileSize" Value="${maxFileSize}" />
+        <Property ID="OverwriteOldestFile" Value="FALSE" />
+        <Property ID="FileNamePattern" Value="${fileNamePattern}" />
+        <Property ID="TimeStampPattern" Value="%Y %m %d %H:%M:%S:%L" />
+        <Property ID="ColumnSeparator" Value=";" />
+        <Property ID="DecimalMark" Value="," />
+        <Selector ID="Format" Value="CSV" />
+      </Group>
+    </Group>`;
+
+        // ---- 5. Build AS6 Alarms section ----
+        const alarmsSection = this.buildMpDataRecorderAlarms(as4Alarms);
+
+        // ---- 6. Assemble ----
+        return `  <Element ID="${elemId}" Type="mpdatarecorder">
+${mappGen}
+${dataRecorder}
+${alarmsSection}
+  </Element>`;
+    }
+
+    /**
+     * Build the full Alarms Selector for an AS6 MpDataRecorder Element.
+     *
+     * Always emits three default alarm groups:
+     *   [0] RecordingCompleted
+     *   [1] RecordingAborted
+     *   [2] LimitViolated
+     *
+     * Properties that the AS4 source defined for a given index are merged in,
+     * overriding the defaults.
+     *
+     * @param {Map} as4Alarms - Map of alarm index → { propId: value } from AS4
+     * @returns {string} Complete <Selector ID="Alarms" …>…</Selector> XML block
+     */
+    buildMpDataRecorderAlarms(as4Alarms) {
+        const defaultAlarms = [
+            { index: 0, name: 'RecordingCompleted', message: '{$BR/mapp/MpDataRecorder/Alarms/RecordingCompleted}', code: '0', severity: '1' },
+            { index: 1, name: 'RecordingAborted',   message: '{$BR/mapp/MpDataRecorder/Alarms/RecordingAborted}',   code: '0', severity: '1' },
+            { index: 2, name: 'LimitViolated',      message: '{$BR/mapp/MpDataRecorder/Alarms/LimitViolated}',      code: '0', severity: '1' }
+        ];
+
+        const groups = defaultAlarms.map(def => {
+            const idx = String(def.index);
+            const as4 = as4Alarms.get(idx) || {};
+
+            // Merge: AS4 values override defaults
+            const name     = as4['Name']     || def.name;
+            const message  = as4['Message']  || def.message;
+            const code     = as4['Code']     || def.code;
+            const severity = as4['Severity'] || def.severity;
+
+            return `      <Group ID="[${idx}]">
+        <Property ID="Name" Value="${name}" />
+        <Property ID="Message" Value="${this.escapeXmlAttribute(message)}" />
+        <Property ID="Code" Value="${code}" />
+        <Property ID="Severity" Value="${severity}" />
+        <Selector ID="Behavior" Value="EdgeAlarm">
+          <Property ID="AutoReset" Value="TRUE" />
+          <Property ID="Acknowledge" Value="1" />
+          <Property ID="Confirm" Value="0" />
+          <Property ID="MultipleInstances" Value="TRUE" />
+          <Property ID="ReactionWhilePending" Value="TRUE" />
+          <Property ID="Async" Value="FALSE" />
+          <Group ID="Recording">
+            <Property ID="InactiveToActive" Value="TRUE" />
+            <Property ID="ActiveToInactive" Value="FALSE" />
+            <Property ID="UnacknowledgedToAcknowledged" Value="TRUE" />
+            <Property ID="UnconfirmedToConfirmed" Value="TRUE" />
+          </Group>
+        </Selector>
+        <Property ID="Disable" Value="FALSE" />
+        <Property ID="AdditionalInformation1" />
+        <Property ID="AdditionalInformation2" />
+      </Group>`;
+        });
+
+        return `    <Selector ID="Alarms" Value="MpAlarmX">
+      <Group ID="mapp.AlarmX.Core.Configuration">
+${groups.join('\n')}
+      </Group>
+    </Selector>`;
+    }
+
+    /**
+     * Auto-fix OPC UA server ConnectionPolicy in .uaserver files.
+     * The ConnectionPolicy must be set to "1" (Current mapp view user) for mappView
+     * HMI applications to properly access PVs through OPC UA.
+     * 
+     * Value="1" = Current mapp view user (correct / default)
+     * Any other value = wrong, must be corrected
+     * If the Selector line is absent entirely, the default applies and no change is needed.
+     */
+    autoApplyUaServerConnectionPolicy() {
+        console.log('Checking OPC UA server ConnectionPolicy in .uaserver files...');
+        
+        let updatedCount = 0;
+        
+        this.projectFiles.forEach((file, path) => {
+            if (!path.toLowerCase().endsWith('.uaserver') || file.isBinary || typeof file.content !== 'string') return;
+            
+            let content = file.content;
+            
+            // Check if ConnectionPolicy is present with a value other than "1"
+            const connectionPolicyMatch = content.match(/<Selector\s+ID="ConnectionPolicy"\s+Value="([^"]*)"\s*\/?>/);
+            
+            if (!connectionPolicyMatch) {
+                // No ConnectionPolicy line found — default value applies, which is correct
+                console.log(`No ConnectionPolicy setting in ${path} — default (Current mapp view user) applies`);
+                return;
+            }
+            
+            const currentValue = connectionPolicyMatch[1];
+            
+            if (currentValue === '1') {
+                console.log(`ConnectionPolicy already set to "1" in ${path}`);
+                return;
+            }
+            
+            // Fix the value to "1"
+            const updatedContent = content.replace(
+                /<Selector\s+ID="ConnectionPolicy"\s+Value="[^"]*"\s*\/?>/,
+                '<Selector ID="ConnectionPolicy" Value="1" />'
+            );
+            
+            if (updatedContent !== content) {
+                file.content = updatedContent;
+                updatedCount++;
+                console.log(`Fixed ConnectionPolicy from "${currentValue}" to "1" in ${path}`);
+                
+                this.analysisResults.push({
+                    severity: 'warning',
+                    category: 'mappview',
+                    name: 'OPC UA ConnectionPolicy Fixed',
+                    description: `Changed ConnectionPolicy from "${currentValue}" to "1" (Current mapp view user). Required for mappView OPC UA PV access.`,
+                    file: path,
+                    autoFixed: true,
+                    details: [`ConnectionPolicy changed from "${currentValue}" to "1" (Current mapp view user)`]
+                });
+            }
+        });
+        
+        if (updatedCount > 0) {
+            console.log(`ConnectionPolicy fixed in ${updatedCount} .uaserver file(s)`);
+        } else {
+            console.log('All .uaserver files have correct ConnectionPolicy or none found');
+        }
+    }
+
+    /**
+     * Auto-fix SecurityPolicy "None" in .uacfg files.
+     * The "None" security policy must be enabled (Value="1") in the MessageSecurity
+     * SecurityPolicies group for mappView HMI applications to access PVs via OPC UA.
+     *
+     * If the Property is present with Value != "1", it is corrected.
+     * If the Property is missing entirely, it is inserted into the SecurityPolicies group.
+     */
+    autoApplyUaCfgSecurityPolicyNone() {
+        console.log('Checking SecurityPolicy "None" in .uacfg files...');
+        
+        let updatedCount = 0;
+        
+        this.projectFiles.forEach((file, path) => {
+            if (!path.toLowerCase().endsWith('.uacfg') || file.isBinary || typeof file.content !== 'string') return;
+            
+            let content = file.content;
+            
+            // Look for the MessageSecurity > SecurityPolicies group
+            // We need to target the first SecurityPolicies group (under MessageSecurity),
+            // not the second one (under Authentication)
+            const msgSecurityMatch = content.match(
+                /(<Group\s+ID="MessageSecurity">\s*<Group\s+ID="SecurityPolicies">)([\s\S]*?)(<\/Group>)/
+            );
+            
+            if (!msgSecurityMatch) {
+                console.log(`No MessageSecurity/SecurityPolicies group found in ${path}`);
+                return;
+            }
+            
+            const policiesContent = msgSecurityMatch[2];
+            
+            // Check if None property exists
+            const noneMatch = policiesContent.match(/<Property\s+ID="None"\s+Value="([^"]*)"\s*\/?>/);            
+            
+            if (noneMatch && noneMatch[1] === '1') {
+                console.log(`SecurityPolicy "None" already enabled in ${path}`);
+                return;
+            }
+            
+            let updatedContent;
+            let changeDetail;
+            
+            if (noneMatch) {
+                // Property exists but with wrong value — fix it
+                const oldValue = noneMatch[1];
+                updatedContent = content.replace(
+                    /(<Group\s+ID="MessageSecurity">\s*<Group\s+ID="SecurityPolicies">\s*)<Property\s+ID="None"\s+Value="[^"]*"\s*\/?>/,
+                    '$1<Property ID="None" Value="1" />'
+                );
+                changeDetail = `Changed SecurityPolicy "None" from "${oldValue}" to "1"`;
+            } else {
+                // Property is missing — insert it as the first entry in SecurityPolicies
+                updatedContent = content.replace(
+                    /(<Group\s+ID="MessageSecurity">\s*<Group\s+ID="SecurityPolicies">)/,
+                    '$1\n          <Property ID="None" Value="1" />'
+                );
+                changeDetail = 'Added SecurityPolicy "None" with Value="1"';
+            }
+            
+            if (updatedContent !== content) {
+                file.content = updatedContent;
+                updatedCount++;
+                console.log(`${changeDetail} in ${path}`);
+                
+                this.analysisResults.push({
+                    severity: 'warning',
+                    category: 'opcua',
+                    name: 'OPC UA SecurityPolicy "None" Enabled',
+                    description: `${changeDetail}. Required for mappView OPC UA PV access.`,
+                    file: path,
+                    autoFixed: true,
+                    details: [changeDetail]
+                });
+            }
+        });
+        
+        if (updatedCount > 0) {
+            console.log(`SecurityPolicy "None" fixed in ${updatedCount} .uacfg file(s)`);
+        } else {
+            console.log('All .uacfg files have SecurityPolicy "None" enabled or none found');
+        }
+    }
+
+    /**
+     * Auto-add BR_Engineer role to every user in .user files.
+     * In AS6, the BR_Engineer role is required for mappView HMI applications
+     * to have access to process variables (PVs) through OPC UA.
+     * 
+     * For each user element in .user files, this method checks if BR_Engineer
+     * is already assigned. If not, it adds it as an additional Role entry.
+     */
+    autoApplyUserBREngineerRole() {
+        console.log('Adding BR_Engineer role to all users in .user files...');
+        
+        let updatedFileCount = 0;
+        let updatedUserCount = 0;
+        
+        this.projectFiles.forEach((file, path) => {
+            if (!path.toLowerCase().endsWith('.user') || file.isBinary || typeof file.content !== 'string') return;
+            
+            let content = file.content;
+            
+            // Skip if file doesn't look like a user configuration
+            if (!content.includes('<Element') || !content.includes('Type="User"')) return;
+            
+            // Already has BR_Engineer for all users? Quick check
+            // We need to process per-user, so we can't just do a single check
+            
+            let fileModified = false;
+            const usersUpdated = [];
+            
+            // Match each Element block for users
+            // Process each <Group ID="Roles"> block within user elements
+            const elementRegex = /<Element\s+ID="([^"]*)"\s+Type="User"[^>]*>([\s\S]*?)<\/Element>/g;
+            let match;
+            
+            while ((match = elementRegex.exec(content)) !== null) {
+                const userId = match[1];
+                const elementContent = match[2];
+                const elementFullMatch = match[0];
+                
+                // Check if this user already has BR_Engineer
+                if (elementContent.includes('"BR_Engineer"')) {
+                    console.log(`User "${userId}" already has BR_Engineer role in ${path}`);
+                    continue;
+                }
+                
+                // Find the Roles group
+                const rolesGroupMatch = elementContent.match(/<Group\s+ID="Roles">[\s\S]*?<\/Group>/);
+                if (!rolesGroupMatch) {
+                    console.log(`User "${userId}" has no Roles group in ${path}, skipping`);
+                    continue;
+                }
+                
+                const rolesGroup = rolesGroupMatch[0];
+                
+                // Count existing roles to determine the next Role index
+                const roleEntries = rolesGroup.match(/Role\[(\d+)\]/g) || [];
+                const maxIndex = roleEntries.reduce((max, entry) => {
+                    const idx = parseInt(entry.match(/\d+/)[0]);
+                    return Math.max(max, idx);
+                }, 0);
+                const newIndex = maxIndex + 1;
+                
+                // Insert the new role before </Group>
+                const newRoleEntry = `      <Property ID="Role[${newIndex}]" Value="BR_Engineer" />`;
+                const updatedRolesGroup = rolesGroup.replace(
+                    '</Group>',
+                    newRoleEntry + '\n    </Group>'
+                );
+                
+                // Replace in the element
+                const updatedElement = elementFullMatch.replace(rolesGroup, updatedRolesGroup);
+                content = content.replace(elementFullMatch, updatedElement);
+                
+                usersUpdated.push(userId);
+                updatedUserCount++;
+                fileModified = true;
+                console.log(`Added BR_Engineer role (Role[${newIndex}]) to user "${userId}" in ${path}`);
+            }
+            
+            if (fileModified) {
+                file.content = content;
+                updatedFileCount++;
+                
+                this.analysisResults.push({
+                    severity: 'info',
+                    category: 'security',
+                    name: 'BR_Engineer Role Added',
+                    description: `Added BR_Engineer role to ${usersUpdated.length} user(s): ${usersUpdated.join(', ')}. Required for mappView OPC UA PV access.`,
+                    file: path,
+                    autoFixed: true,
+                    details: usersUpdated.map(u => `Added BR_Engineer to user "${u}"`)
+                });
+            }
+        });
+        
+        if (updatedFileCount > 0) {
+            console.log(`BR_Engineer role added in ${updatedFileCount} .user file(s), ${updatedUserCount} user(s) updated`);
+        } else {
+            console.log('No .user files found or all users already have BR_Engineer role');
         }
     }
 
@@ -7304,43 +7931,92 @@ ${mappingGroups}
         // Create project folder in ZIP
         const projectFolder = zip.folder(projectName + '_AS6');
         
-        // Get list of technology package libraries whose files will be replaced with AS6 versions
-        // We'll skip ALL files from these libraries and fetch fresh AS6 versions instead
-        // Libraries without AS6 replacement files (as6LibVersion: null) will be copied as-is from AS4
+        // Build the set of technology package libraries that SHOULD be replaced with AS6 versions.
+        // Libraries without AS6 replacement files (as6LibVersion: null) are kept as-is from AS4.
         const techPackageLibraries = new Set();
         
         Object.entries(DeprecationDatabase.as6Format.libraryMapping).forEach(([libName, mapping]) => {
             const hasReplacementFiles = mapping.as6LibVersion !== null && mapping.as6LibVersion !== undefined;
             if ((mapping.techPackage || mapping.source === 'Library_2') && hasReplacementFiles) {
-                // Library has AS6 replacement files to fetch - skip AS4 version
                 techPackageLibraries.add(libName.toLowerCase());
             }
-            // Libraries with null version will NOT be added to techPackageLibraries,
-            // so their AS4 files will be copied as-is
         });
         
-        // Add all project files with their directory structure
-        // Skip files from technology package libraries - they'll be replaced with AS6 versions
-        // Libraries not in techPackageLibraries (including runtime libraries) are copied as-is
+        // ── Fetch AS6 library files FIRST, so we know which replacements succeeded ──
+        // This prevents the scenario where AS4 files are skipped but the fetch fails,
+        // leaving the converted project with missing libraries.
+        let as6LibraryFiles = new Map();
+        let successfullyFetchedLibraries = new Set(); // lowercase lib names that were actually fetched
+        
+        if (requiredPackages.size > 0) {
+            progressMessage.textContent = 'Fetching AS6 library files...';
+            progressBar.style.width = '5%';
+            progressPercent.textContent = '5%';
+            
+            console.log('=== Starting AS6 library fetch ===');
+            console.log('Required packages:', requiredPackages.size);
+            requiredPackages.forEach((pkg, name) => {
+                console.log(`  Package: ${name}, libraries: ${pkg.libraries.size}`);
+                pkg.libraries.forEach((lib, libName) => {
+                    console.log(`    - ${libName}: version=${lib.version}`);
+                });
+            });
+            
+            as6LibraryFiles = await this.fetchAS6LibraryFiles(requiredPackages, (fetched, total) => {
+                const pct = 5 + Math.floor((fetched / total) * 15);
+                progressBar.style.width = pct + '%';
+                progressPercent.textContent = pct + '%';
+            });
+            
+            console.log(`=== Fetched ${as6LibraryFiles.size} AS6 library files ===`);
+            if (as6LibraryFiles.size > 0) {
+                const fileList = Array.from(as6LibraryFiles.keys());
+                console.log('First 10 fetched files:', fileList.slice(0, 10));
+            }
+            
+            // Build set of library names for which we actually fetched replacement files
+            for (const [relativePath] of as6LibraryFiles) {
+                const libMatch = relativePath.match(/^Libraries[/\\]([^/\\]+)/i);
+                if (libMatch) {
+                    successfullyFetchedLibraries.add(libMatch[1].toLowerCase());
+                }
+            }
+            console.log(`Successfully fetched replacements for ${successfullyFetchedLibraries.size} libraries: ${Array.from(successfullyFetchedLibraries).join(', ')}`);
+            
+            // Warn about libraries that should have been replaced but weren't fetched
+            const missingReplacements = [];
+            for (const libName of techPackageLibraries) {
+                if (!successfullyFetchedLibraries.has(libName)) {
+                    missingReplacements.push(libName);
+                }
+            }
+            if (missingReplacements.length > 0) {
+                console.warn(`WARNING: ${missingReplacements.length} library replacements could not be fetched (AS4 versions will be kept): ${missingReplacements.join(', ')}`);
+            }
+        } else {
+            console.log('=== No required packages detected, skipping AS6 library fetch ===');
+        }
+        
+        // ── Add project files to ZIP, skipping ONLY libraries that were successfully fetched ──
+        progressMessage.textContent = 'Creating ZIP archive...';
         let fileCount = 0;
         let skippedLibraryFiles = 0;
         const totalFiles = this.projectFiles.size;
         this.projectFiles.forEach((file, path) => {
-            // Check if this file is inside a technology package library folder
             const pathParts = path.toLowerCase().split(/[/\\]/);
             const libIndex = pathParts.indexOf('libraries');
             let skipLibraryFile = false;
             
             if (libIndex >= 0 && libIndex < pathParts.length - 1) {
                 const libName = pathParts[libIndex + 1];
-                if (techPackageLibraries.has(libName)) {
+                // Only skip if we SUCCESSFULLY fetched AS6 replacement files for this library
+                if (successfullyFetchedLibraries.has(libName)) {
                     skipLibraryFile = true;
                     skippedLibraryFiles++;
                 }
             }
             
             if (!skipLibraryFile) {
-                // For binary files, pass the ArrayBuffer with binary option
                 if (file.isBinary) {
                     projectFolder.file(path, file.content, { binary: true });
                 } else {
@@ -7348,14 +8024,13 @@ ${mappingGroups}
                 }
             }
             fileCount++;
-            // Update progress to 50% during file addition
-            const percent = Math.floor((fileCount / totalFiles) * 50);
+            const percent = 20 + Math.floor((fileCount / totalFiles) * 30);
             progressBar.style.width = percent + '%';
             progressPercent.textContent = percent + '%';
         });
         
         if (skippedLibraryFiles > 0) {
-            console.log(`Skipped ${skippedLibraryFiles} files from technology package and runtime libraries`);
+            console.log(`Skipped ${skippedLibraryFiles} AS4 library files (replaced with AS6 versions)`);
         }
         
         // Add AS6 structural changes info
@@ -7389,44 +8064,16 @@ ${mappingGroups}
         const summary = this.generateConversionSummary();
         projectFolder.file('_conversion-summary.txt', summary);
         
-        // Fetch and add AS6 library files from bundled LibrariesForAS6 folder
-        if (requiredPackages.size > 0) {
-            progressMessage.textContent = 'Fetching AS6 library files...';
+        // Add fetched AS6 library files to the ZIP (in Logical/Libraries folder)
+        if (as6LibraryFiles.size > 0) {
+            progressMessage.textContent = 'Adding AS6 library files to ZIP...';
             progressBar.style.width = '56%';
             progressPercent.textContent = '56%';
             
-            console.log('=== Starting AS6 library fetch ===');
-            console.log('Required packages:', requiredPackages.size);
-            requiredPackages.forEach((pkg, name) => {
-                console.log(`  Package: ${name}, libraries: ${pkg.libraries.size}`);
-                pkg.libraries.forEach((lib, libName) => {
-                    console.log(`    - ${libName}: version=${lib.version}`);
-                });
-            });
-            
-            const as6LibraryFiles = await this.fetchAS6LibraryFiles(requiredPackages, (fetched, total) => {
-                const pct = 56 + Math.floor((fetched / total) * 4);
-                progressBar.style.width = pct + '%';
-                progressPercent.textContent = pct + '%';
-            });
-            
-            console.log(`=== Fetched ${as6LibraryFiles.size} AS6 library files ===`);
-            if (as6LibraryFiles.size > 0) {
-                // Show first 10 files that were fetched
-                const fileList = Array.from(as6LibraryFiles.keys());
-                console.log('First 10 fetched files:', fileList.slice(0, 10));
-            }
-            
-            // Add AS6 library files to the ZIP (in Logical/Libraries folder)
-            // Need to determine the project folder prefix from existing files
-            // Look for the actual Logical/Libraries path, not SafeLOGIC paths
+            // Determine the project folder prefix from existing files
             let projectFolderPrefix = '';
             for (const [path] of this.projectFiles) {
-                // Skip SafeLOGIC paths - they have their own Logical folder structure
-                if (path.toLowerCase().includes('safelogic')) {
-                    continue;
-                }
-                // Look for Logical/Libraries specifically to find the correct project root
+                if (path.toLowerCase().includes('safelogic')) continue;
                 const logicalLibrariesMatch = path.match(/^(.*?)Logical[/\\]Libraries[/\\]/i);
                 if (logicalLibrariesMatch) {
                     projectFolderPrefix = logicalLibrariesMatch[1];
@@ -7434,12 +8081,9 @@ ${mappingGroups}
                 }
             }
             
-            // Fallback: if no Logical/Libraries found, look for just Logical (but not in SafeLOGIC)
             if (!projectFolderPrefix) {
                 for (const [path] of this.projectFiles) {
-                    if (path.toLowerCase().includes('safelogic')) {
-                        continue;
-                    }
+                    if (path.toLowerCase().includes('safelogic')) continue;
                     const logicalMatch = path.match(/^(.*?)Logical[/\\]/i);
                     if (logicalMatch) {
                         projectFolderPrefix = logicalMatch[1];
@@ -7450,38 +8094,30 @@ ${mappingGroups}
             
             console.log(`Project folder prefix: "${projectFolderPrefix}"`);
             
-            // Build a set of existing library paths that are NOT being replaced with AS6 versions
-            // Libraries in techPackageLibraries are being replaced, so they should NOT be in existingLibraryPaths
+            // Build set of custom library paths (NOT being replaced) to avoid overwriting them
             const existingLibraryPaths = new Set();
             for (const [path] of this.projectFiles) {
                 const pathLower = path.toLowerCase();
                 if (pathLower.includes('/libraries/') || pathLower.includes('\\libraries\\')) {
-                    // Extract the relative library path (e.g., "Libraries/AsBrStr/...")
                     const libMatch = pathLower.match(/libraries[/\\]([^/\\]+)/i);
                     if (libMatch) {
                         const libName = libMatch[1].toLowerCase();
-                        // Only mark as "existing" if this library is NOT being replaced with an AS6 version
-                        // Libraries in techPackageLibraries are being replaced, so we should add the AS6 version
                         if (!techPackageLibraries.has(libName)) {
                             existingLibraryPaths.add(libName);
                         }
                     }
                 }
             }
-            console.log(`Existing libraries NOT being replaced: ${Array.from(existingLibraryPaths).join(', ')}`);
-            console.log(`Libraries being replaced with AS6 versions: ${Array.from(techPackageLibraries).join(', ')}`);
             
             let addedLibFiles = 0;
             let skippedLibFiles = 0;
             for (const [relativePath, fileData] of as6LibraryFiles) {
-                // Check if this library already exists in the project AND is NOT being replaced
                 const libMatch = relativePath.match(/^Libraries[/\\]([^/\\]+)/i);
                 const libName = libMatch ? libMatch[1].toLowerCase() : null;
                 
                 if (libName && existingLibraryPaths.has(libName)) {
-                    // Skip - library already exists in project and is NOT being replaced
                     if (skippedLibFiles < 3) {
-                        console.log(`  Skipping (already exists and not being replaced): ${relativePath}`);
+                        console.log(`  Skipping (custom library, not being replaced): ${relativePath}`);
                     }
                     skippedLibFiles++;
                     continue;
@@ -7499,21 +8135,15 @@ ${mappingGroups}
                 addedLibFiles++;
             }
             console.log(`Added ${addedLibFiles} AS6 library files to ZIP, skipped ${skippedLibFiles} (custom libraries not being replaced)`);
+        } else if (requiredPackages.size > 0) {
+            // Required packages were detected but no files were fetched - show warning
+            const missingLibs = Array.from(techPackageLibraries).join(', ');
+            console.error('WARNING: AS6 library files could not be fetched. AS4 library versions have been preserved as fallback.');
+            console.error('Libraries that could not be updated:', missingLibs);
+            console.error('Make sure you are running this tool via a web server (not file:// protocol).');
             
-            // Show warning if no library files were added despite having packages to fetch
-            if (addedLibFiles === 0 && as6LibraryFiles.size === 0) {
-                const missingLibs = Array.from(techPackageLibraries).join(', ');
-                console.error('WARNING: No AS6 library files were fetched. The converted project may be missing required libraries.');
-                console.error('Missing libraries:', missingLibs);
-                console.error('Please ensure you are running this tool via a web server (not file:// protocol).');
-                console.error('Check the browser console for any fetch errors.');
-                
-                // Add a visible note to the conversion report
-                const warningNote = `\n\n=== WARNING ===\nNo AS6 library files were fetched. The following libraries may be missing:\n${missingLibs}\n\nPlease ensure you are running this tool via a web server and check the browser console for errors.`;
-                projectFolder.file('_conversion-summary.txt', summary + warningNote);
-            }
-        } else {
-            console.log('=== No required packages, skipping AS6 library fetch ===');
+            const warningNote = `\n\n=== WARNING ===\nAS6 library files could not be fetched. The AS4 library versions have been preserved as fallback.\nThe following libraries were NOT updated to AS6 versions:\n${missingLibs}\n\nTo fix: ensure you are running this tool via a web server and check the browser console for errors.`;
+            projectFolder.file('_conversion-summary.txt', summary + warningNote);
         }
         
         // Generate ZIP file
