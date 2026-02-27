@@ -229,11 +229,92 @@ body {
 
 /* File Tree */
 .file-tree {
-    max-height: 300px;
+    max-height: 400px;
     overflow-y: auto;
     background: var(--card-bg);
     border-radius: var(--radius);
-    padding: 15px;
+    padding: 10px 15px;
+    margin-top: 10px;
+}
+
+/* ---- Category headers (top-level: Logical, Physical, etc.) ---- */
+.tree-category {
+    margin-bottom: 4px;
+}
+
+.tree-category-header {
+    padding: 8px 10px;
+    cursor: pointer;
+    border-radius: var(--radius);
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.95rem;
+    transition: background 0.15s;
+}
+.tree-category-header:hover {
+    background: rgba(255,255,255,0.06);
+}
+
+/* ---- Folder lists (nested <ul>) ---- */
+.tree-folder-list {
+    list-style: none;
+    padding-left: 18px;
+    margin: 0;
+}
+
+/* ---- Folder headers (collapsible rows) ---- */
+.tree-folder-header {
+    padding: 4px 8px;
+    cursor: pointer;
+    border-radius: 4px;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.88rem;
+    transition: background 0.15s;
+}
+.tree-folder-header:hover {
+    background: rgba(255,255,255,0.06);
+}
+
+.tree-folder-name {
+    font-family: 'Consolas', monospace;
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+/* ---- Individual file items ---- */
+.tree-file {
+    padding: 3px 8px 3px 26px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    border-radius: 4px;
+    transition: background 0.15s;
+}
+.tree-file:hover {
+    background: rgba(255,255,255,0.04);
+}
+
+/* ---- Toggle arrow ---- */
+.tree-toggle {
+    display: inline-block;
+    width: 14px;
+    text-align: center;
+    font-size: 0.7rem;
+    color: var(--text-muted, #888);
+    flex-shrink: 0;
+}
+
+/* ---- Count badge ---- */
+.tree-count {
+    font-size: 0.78rem;
+    color: var(--text-muted, #888);
+    margin-left: 2px;
 }
 
 .tree-list {

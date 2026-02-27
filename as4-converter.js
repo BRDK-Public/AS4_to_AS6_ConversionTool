@@ -1124,24 +1124,156 @@ class AS4Converter {
     }
 
     renderFileTree() {
-        const tree = document.createElement('ul');
-        tree.className = 'tree-list';
-        
-        const sortedPaths = Array.from(this.projectFiles.keys()).sort();
-        
-        sortedPaths.forEach(path => {
-            const file = this.projectFiles.get(path);
-            const li = document.createElement('li');
-            li.className = 'tree-item';
-            li.innerHTML = `
-                <span class="file-icon">${this.getFileIcon(file.type)}</span>
-                <span class="file-name">${path}</span>
-            `;
-            tree.appendChild(li);
+        const container = this.elements.fileTree;
+        container.innerHTML = '';
+
+        if (this.projectFiles.size === 0) return;
+
+        // ---- 1. Categorize files by top-level project folder ----
+        const categories = new Map(); // categoryLabel -> Map(relativePath -> file)
+        const categoryOrder = [
+            { key: 'Logical',  icon: '🧠', label: 'Logical (Tasks & Programs)' },
+            { key: 'Physical', icon: '🔌', label: 'Physical (Hardware Config)' },
+            { key: 'project',  icon: '🗂️', label: 'Project Files' },
+            { key: 'other',    icon: '📄', label: 'Other Files' }
+        ];
+        categoryOrder.forEach(c => categories.set(c.key, new Map()));
+
+        this.projectFiles.forEach((file, path) => {
+            const normalized = path.replace(/\\/g, '/');
+            const lowerPath = normalized.toLowerCase();
+            // Detect category by looking for Logical/ or Physical/ anywhere in path
+            if (lowerPath.includes('/logical/') || lowerPath.startsWith('logical/')) {
+                categories.get('Logical').set(normalized, file);
+            } else if (lowerPath.includes('/physical/') || lowerPath.startsWith('physical/')) {
+                categories.get('Physical').set(normalized, file);
+            } else if (file.type === 'project' || normalized.endsWith('.apj')) {
+                categories.get('project').set(normalized, file);
+            } else {
+                categories.get('other').set(normalized, file);
+            }
         });
-        
-        this.elements.fileTree.innerHTML = '';
-        this.elements.fileTree.appendChild(tree);
+
+        // ---- 2. Render each category ----
+        for (const catDef of categoryOrder) {
+            const files = categories.get(catDef.key);
+            if (files.size === 0) continue;
+
+            const catSection = document.createElement('div');
+            catSection.className = 'tree-category';
+
+            const catHeader = document.createElement('div');
+            catHeader.className = 'tree-category-header';
+            catHeader.innerHTML = `<span class="tree-toggle">▶</span> ${catDef.icon} <strong>${catDef.label}</strong> <span class="tree-count">(${files.size})</span>`;
+            catHeader.addEventListener('click', () => {
+                const isOpen = catSection.classList.toggle('open');
+                catHeader.querySelector('.tree-toggle').textContent = isOpen ? '▼' : '▶';
+                treeRoot.style.display = isOpen ? 'block' : 'none';
+            });
+            catSection.appendChild(catHeader);
+
+            // Build a nested folder tree from the paths
+            const treeRoot = this.buildFolderTree(files, catDef.key);
+            treeRoot.style.display = 'none'; // categories start collapsed
+            catSection.appendChild(treeRoot);
+
+            container.appendChild(catSection);
+        }
+    }
+
+    /**
+     * Build a nested <ul> tree of folders and files from a Map of paths.
+     * Each folder level is collapsible.
+     */
+    buildFolderTree(fileMap, categoryKey) {
+        // Build nested object: { __files__: [], subfolderName: { ... } }
+        const root = { __files__: [] };
+
+        fileMap.forEach((file, fullPath) => {
+            const normalized = fullPath.replace(/\\/g, '/');
+            const parts = normalized.split('/');
+
+            // Strip everything up to and including the category folder (e.g. "MDP23/Logical/")
+            let startIdx = 0;
+            if (categoryKey === 'Logical' || categoryKey === 'Physical') {
+                const catIdx = parts.findIndex(p => p.toLowerCase() === categoryKey.toLowerCase());
+                startIdx = catIdx >= 0 ? catIdx + 1 : 0;
+            } else {
+                // For project/other: skip the project root folder name
+                startIdx = parts.length > 1 ? 1 : 0;
+            }
+
+            const relevant = parts.slice(startIdx);
+            if (relevant.length === 0) return;
+
+            let node = root;
+            for (let i = 0; i < relevant.length - 1; i++) {
+                const folder = relevant[i];
+                if (!node[folder]) node[folder] = { __files__: [] };
+                node = node[folder];
+            }
+            node.__files__.push({ name: relevant[relevant.length - 1], file, fullPath });
+        });
+
+        return this.renderFolderNode(root, 0);
+    }
+
+    /**
+     * Recursively render a folder node into a <ul> element.
+     */
+    renderFolderNode(node, depth) {
+        const ul = document.createElement('ul');
+        ul.className = 'tree-folder-list';
+        if (depth > 0) ul.style.display = 'none'; // collapsed by default
+
+        // Render sub-folders first (sorted)
+        const folders = Object.keys(node).filter(k => k !== '__files__').sort();
+        for (const folderName of folders) {
+            const li = document.createElement('li');
+            li.className = 'tree-folder';
+
+            const childNode = node[folderName];
+            const count = this.countTreeItems(childNode);
+
+            const header = document.createElement('div');
+            header.className = 'tree-folder-header';
+            header.innerHTML = `<span class="tree-toggle">▶</span> 📁 <span class="tree-folder-name">${folderName}</span> <span class="tree-count">(${count})</span>`;
+
+            const childUl = this.renderFolderNode(childNode, depth + 1);
+
+            header.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const isOpen = li.classList.toggle('open');
+                header.querySelector('.tree-toggle').textContent = isOpen ? '▼' : '▶';
+                childUl.style.display = isOpen ? 'block' : 'none';
+            });
+
+            li.appendChild(header);
+            li.appendChild(childUl);
+            ul.appendChild(li);
+        }
+
+        // Render files (sorted)
+        const files = (node.__files__ || []).sort((a, b) => a.name.localeCompare(b.name));
+        for (const entry of files) {
+            const li = document.createElement('li');
+            li.className = 'tree-file';
+            li.innerHTML = `<span class="file-icon">${this.getFileIcon(entry.file.type)}</span> <span class="file-name">${entry.name}</span>`;
+            ul.appendChild(li);
+        }
+
+        return ul;
+    }
+
+    /**
+     * Count total files in a folder tree node (recursively).
+     */
+    countTreeItems(node) {
+        let count = (node.__files__ || []).length;
+        for (const key of Object.keys(node)) {
+            if (key !== '__files__') count += this.countTreeItems(node[key]);
+        }
+        return count;
     }
 
     getFileIcon(type) {
