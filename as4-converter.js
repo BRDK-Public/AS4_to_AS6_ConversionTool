@@ -6665,56 +6665,162 @@ ${groups.join('\n')}
         const container = this.elements.findingsList;
         container.innerHTML = '';
         
-        // Group by type
-        const grouped = {
-            project: [],
-            compiler: [],
-            runtime: [],
-            technology_package: [],
-            package: [],
-            library: [],
-            library_version: [],
-            function: [],
-            function_block: [],
-            hardware: [],
-            task_config: [],
-            motion: [],
-            localization: [],
-            visualization: []
-        };
-        
-        this.getFilteredFindings().forEach(finding => {
-            if (grouped[finding.type]) {
-                grouped[finding.type].push(finding);
+        const filtered = this.getFilteredFindings();
+        if (filtered.length === 0) {
+            container.innerHTML = '<div class="empty-state"><p>No findings match the current filters.</p></div>';
+            this.updateSelectedCount();
+            return;
+        }
+
+        // ---- 1. Separate auto-applied from manual-review findings ----
+        const autoApplied = [];
+        const manualReview = [];
+        filtered.forEach(f => {
+            if (f.autoFixed) {
+                autoApplied.push(f);
             } else {
-                grouped.project.push(finding);
+                manualReview.push(f);
             }
         });
-        
-        // Render each group
-        Object.entries(grouped).forEach(([type, findings]) => {
-            if (findings.length === 0) return;
-            
-            const groupEl = document.createElement('div');
-            groupEl.className = 'findings-group';
-            
-            const header = document.createElement('div');
-            header.className = 'group-header';
-            header.innerHTML = `
-                <span class="group-icon">${this.getTypeIcon(type)}</span>
-                <span class="group-name">${this.formatTypeName(type)}</span>
-                <span class="group-count">(${findings.length})</span>
-            `;
-            groupEl.appendChild(header);
-            
-            findings.forEach(finding => {
-                groupEl.appendChild(this.createFindingCard(finding));
-            });
-            
-            container.appendChild(groupEl);
-        });
-        
+
+        // ---- 2. Render "Needs Review" section first (expanded), then "Auto-Applied" (collapsed) ----
+        if (manualReview.length > 0) {
+            container.appendChild(this.buildFindingsSuperGroup(
+                '🔍 Needs Review',
+                manualReview,
+                true  // start expanded
+            ));
+        }
+
+        if (autoApplied.length > 0) {
+            container.appendChild(this.buildFindingsSuperGroup(
+                '✅ Auto-Applied Conversions',
+                autoApplied,
+                false // start collapsed
+            ));
+        }
+
         this.updateSelectedCount();
+    }
+
+    /**
+     * Build a super-group section (e.g. "Needs Review" / "Auto-Applied")
+     * containing collapsible type sub-groups.
+     */
+    buildFindingsSuperGroup(title, findings, startOpen) {
+        const section = document.createElement('details');
+        section.className = 'findings-super-group';
+        if (startOpen) section.open = true;
+
+        // Count severities for the super-group badge
+        const counts = { error: 0, warning: 0, info: 0 };
+        findings.forEach(f => { if (counts[f.severity] !== undefined) counts[f.severity]++; });
+
+        const summary = document.createElement('summary');
+        summary.className = 'findings-super-header';
+        let badgesHtml = `<span class="tree-count">(${findings.length})</span>`;
+        if (counts.error > 0) badgesHtml += ` <span class="findings-badge badge-error">${counts.error} error${counts.error > 1 ? 's' : ''}</span>`;
+        if (counts.warning > 0) badgesHtml += ` <span class="findings-badge badge-warning">${counts.warning} warning${counts.warning > 1 ? 's' : ''}</span>`;
+        if (counts.info > 0) badgesHtml += ` <span class="findings-badge badge-info">${counts.info} info</span>`;
+        summary.innerHTML = `<strong>${title}</strong> ${badgesHtml}`;
+        section.appendChild(summary);
+
+        // Group by type within this super-group
+        const byType = new Map();
+        findings.forEach(f => {
+            const type = f.type || 'project';
+            if (!byType.has(type)) byType.set(type, []);
+            byType.get(type).push(f);
+        });
+
+        // Render type groups in a logical order
+        const typeOrder = [
+            'project', 'compiler', 'runtime', 'technology_package', 'package',
+            'library', 'library_version', 'deprecated_function_call', 'deprecated_constant',
+            'deprecated_motion_type', 'deprecated_function_block', 'deprecated_struct_member',
+            'deprecated_member_rename',
+            'function', 'function_block', 'hardware', 'task_config',
+            'motion', 'localization', 'visualization', 'safety_config', 'vc_firmware'
+        ];
+
+        // Add any types not in the predefined order
+        byType.forEach((_, type) => {
+            if (!typeOrder.includes(type)) typeOrder.push(type);
+        });
+
+        for (const type of typeOrder) {
+            const typeFindings = byType.get(type);
+            if (!typeFindings || typeFindings.length === 0) continue;
+
+            section.appendChild(this.buildFindingsTypeGroup(type, typeFindings));
+        }
+
+        return section;
+    }
+
+    /**
+     * Build a collapsible type group (e.g. "📚 Libraries (12)")
+     * with findings further sub-grouped by file path.
+     */
+    buildFindingsTypeGroup(type, findings) {
+        const details = document.createElement('details');
+        details.className = 'findings-type-group';
+
+        // Severity breakdown for this type
+        const counts = { error: 0, warning: 0, info: 0 };
+        findings.forEach(f => { if (counts[f.severity] !== undefined) counts[f.severity]++; });
+
+        let badgesHtml = '';
+        if (counts.error > 0) badgesHtml += `<span class="findings-badge badge-error">${counts.error}</span>`;
+        if (counts.warning > 0) badgesHtml += `<span class="findings-badge badge-warning">${counts.warning}</span>`;
+        if (counts.info > 0) badgesHtml += `<span class="findings-badge badge-info">${counts.info}</span>`;
+
+        const summary = document.createElement('summary');
+        summary.className = 'findings-type-header';
+        summary.innerHTML = `
+            <span class="group-icon">${this.getTypeIcon(type)}</span>
+            <span class="group-name">${this.formatTypeName(type)}</span>
+            <span class="tree-count">(${findings.length})</span>
+            <span class="findings-type-badges">${badgesHtml}</span>
+        `;
+        details.appendChild(summary);
+
+        // Sub-group by file path
+        const byFile = new Map();
+        findings.forEach(f => {
+            const file = f.file || '(no file)';
+            if (!byFile.has(file)) byFile.set(file, []);
+            byFile.get(file).push(f);
+        });
+
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'findings-type-content';
+
+        if (byFile.size === 1) {
+            // Single file — just render cards directly
+            findings.forEach(f => contentDiv.appendChild(this.createFindingCard(f)));
+        } else {
+            // Multiple files — sub-group by file (collapsible)
+            byFile.forEach((fileFindings, filePath) => {
+                const fileDetails = document.createElement('details');
+                fileDetails.className = 'findings-file-group';
+
+                const fileSummary = document.createElement('summary');
+                fileSummary.className = 'findings-file-header';
+                fileSummary.innerHTML = `📄 <span class="findings-file-path">${this.shortenPath(filePath, 80)}</span> <span class="tree-count">(${fileFindings.length})</span>`;
+                fileDetails.appendChild(fileSummary);
+
+                const fileContent = document.createElement('div');
+                fileContent.className = 'findings-file-content';
+                fileFindings.forEach(f => fileContent.appendChild(this.createFindingCard(f)));
+                fileDetails.appendChild(fileContent);
+
+                contentDiv.appendChild(fileDetails);
+            });
+        }
+
+        details.appendChild(contentDiv);
+        return details;
     }
 
     /**
