@@ -7972,16 +7972,33 @@ ${groups.join('\n')}
             const finding = this.analysisResults.find(f => f.id === id);
             if (finding) filesModified.add(finding.file);
         });
+        // Also count files touched by auto-applied conversions
+        this.analysisResults.forEach(f => {
+            if (f.autoFixed) filesModified.add(f.file);
+        });
+        
+        const appliedCount = this.appliedConversions.size +
+            this.analysisResults.filter(f => f.autoFixed && !this.appliedConversions.has(f.id)).length;
         
         return {
             timestamp: new Date().toISOString(),
             totalFindings: this.analysisResults.length,
             bySeveity,
-            applied: this.appliedConversions.size,
-            skipped: this.analysisResults.filter(f => f.status === 'skipped').length,
+            applied: appliedCount,
+            skipped: this.analysisResults.filter(f => this.getReportStatus(f) === 'skipped').length,
             filesModified: filesModified.size,
             findings: this.analysisResults
         };
+    }
+
+    /**
+     * Resolve the correct report status for a finding.
+     * Auto-applied findings bypass addFinding() and never get a status assigned,
+     * so their f.status is undefined — which must be treated as 'applied'.
+     */
+    getReportStatus(f) {
+        if (f.autoFixed) return 'applied';
+        return f.status || 'pending';
     }
 
     resetReportUI() {
@@ -8024,14 +8041,14 @@ ${groups.join('\n')}
     generateCSV(report) {
         const headers = ['Type', 'Name', 'Severity', 'Description', 'File', 'Line', 'Replacement', 'Status'];
         const rows = report.findings.map(f => [
-            f.type,
+            f.type || '',
             f.name,
             f.severity,
-            `"${f.description.replace(/"/g, '""')}"`,
+            `"${(f.description || '').replace(/"/g, '""')}"`,
             f.file,
             f.line || '',
             f.replacement ? f.replacement.name || f.replacement : '',
-            f.status
+            this.getReportStatus(f)
         ]);
         
         return [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
@@ -8094,17 +8111,20 @@ ${groups.join('\n')}
             </tr>
         </thead>
         <tbody>
-            ${report.findings.map(f => `
+            ${report.findings.map(f => {
+                const status = this.getReportStatus(f);
+                const statusColor = status === 'applied' ? '#27ae60' : status === 'skipped' ? '#95a5a6' : status === 'pending' ? '#e67e22' : '#7f8c8d';
+                return `
                 <tr>
-                    <td>${f.type}</td>
+                    <td>${f.type || ''}</td>
                     <td>${f.name}</td>
                     <td><span class="severity-badge ${f.severity}">${f.severity}</span></td>
-                    <td>${f.description}</td>
-                    <td>${f.file}</td>
+                    <td>${f.description || ''}</td>
+                    <td>${f.file || ''}</td>
                     <td>${f.replacement ? (f.replacement.name || f.replacement) : 'N/A'}</td>
-                    <td>${f.status}</td>
-                </tr>
-            `).join('')}
+                    <td><span style="color:${statusColor};font-weight:600">${status}</span></td>
+                </tr>`;
+            }).join('')}
         </tbody>
     </table>
     
