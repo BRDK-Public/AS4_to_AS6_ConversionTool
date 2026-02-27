@@ -3293,7 +3293,9 @@ class AS4Converter {
             // Replace AutomaticEnable="True" with RecursiveEnable="1"
             .replace(/AutomaticEnable=["']True["']/gi, 'RecursiveEnable="1"')
             // Replace EnableArrayElements="True" with RecursiveEnable="1"
-            .replace(/EnableArrayElements=["']True["']/gi, 'RecursiveEnable="1"');
+            .replace(/EnableArrayElements=["']True["']/gi, 'RecursiveEnable="1"')
+            // Deduplicate RecursiveEnable when element had both AutomaticEnable and EnableArrayElements
+            .replace(/RecursiveEnable="1"\s+RecursiveEnable="1"/g, 'RecursiveEnable="1"');
         
         // Remove <DefaultView> wrapper (AS6 uses direct <Module> elements instead)
         // The DefaultView element was used in AS4 but is removed in AS6 FileVersion 10
